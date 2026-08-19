@@ -1,0 +1,67 @@
+{
+  "project_info": {
+    "project_number": "77761633811",
+    "project_id": "sokonikwetu-1201b",
+    "storage_bucket": "sokonikwetu-1201b.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:77761633811:android:998e30949caa46b71ba9e6",
+        "android_client_info": {
+          "package_name": "com.example.sokonikwetu"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCb372Vqj7RcA_g3VD00QzGvgQja9K5T04"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:77761633811:android:60191aaf94cd8c781ba9e6",
+        "android_client_info": {
+          "package_name": "com.karzmotors.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCb372Vqj7RcA_g3VD00QzGvgQja9K5T04"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:77761633811:android:d030fdcbd21477231ba9e6",
+        "android_client_info": {
+          "package_name": "com.kukupaja.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCb372Vqj7RcA_g3VD00QzGvgQja9K5T04"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
