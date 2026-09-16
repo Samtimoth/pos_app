@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:printing/printing.dart';
+import 'package:pdf/pdf.dart';
+import 'package:pdf/widgets.dart' as pw;
 import 'package:provider/provider.dart';
 
 import '../models/sale.dart';
@@ -120,17 +123,50 @@ class _SaleReturnSheetState extends State<SaleReturnSheet> {
       });
     }
 
+    final reason = _reasonCtrl.text.trim();
     setState(() => _saving = true);
     try {
       final res = await app.api!.createSaleReturn(
         saleId: widget.sale.saleId,
         items: payload,
-        reason: _reasonCtrl.text.trim(),
+        reason: reason,
       );
       if (!mounted) return;
       if (res['success'] == true) {
         _snack('${res['message'] ?? 'Marejesho yamehifadhiwa'}', AppColors.accent);
-        Navigator.pop(context, true);
+        final returnedLines = <_CreditNoteLine>[];
+        for (final item in widget.items) {
+          final itemId = int.tryParse('${item['item_id']}') ?? 0;
+          final q = _qty[itemId] ?? 0;
+          if (q <= 0) continue;
+          final price = double.tryParse('${item['unit_price']}') ?? 0;
+          returnedLines.add(_CreditNoteLine(
+            name: '${item['product_name'] ?? ''}',
+            qty: q,
+            unitPrice: price,
+            lineTotal: q * price,
+          ));
+        }
+        final returnId = int.tryParse('${res['return_id']}') ?? 0;
+        final refundAmount = double.tryParse('${res['refund_amount']}') ?? 0;
+        final cashRefund = double.tryParse('${res['cash_refund']}') ?? 0;
+        await showModalBottomSheet(
+          context: context,
+          isScrollControlled: true,
+          backgroundColor: Colors.transparent,
+          builder: (_) => _CreditNoteSheet(
+            businessName: app.selectedBusiness?.receiptHeader.isNotEmpty == true
+                ? app.selectedBusiness!.receiptHeader
+                : (app.selectedBusiness?.businessName ?? 'Duka Kiganjani'),
+            creditNoteNo: 'CN-${DateTime.now().year}${DateTime.now().month.toString().padLeft(2, '0')}-${returnId.toString().padLeft(5, '0')}',
+            sale: widget.sale,
+            reason: reason,
+            lines: returnedLines,
+            refundAmount: refundAmount,
+            cashRefund: cashRefund,
+          ),
+        );
+        if (mounted) Navigator.pop(context, true);
       } else {
         _snack('${res['message'] ?? 'Hitilafu'}', AppColors.chartRed);
       }
@@ -328,6 +364,217 @@ class _QtyStepper extends StatelessWidget {
             onTap: enabled ? onTap : null,
             child: Icon(icon, size: 16, color: enabled ? AppColors.chartBlue : AppColors.textMuted),
           ),
+        ),
+      );
+}
+
+class _CreditNoteLine {
+  final String name;
+  final double qty;
+  final double unitPrice;
+  final double lineTotal;
+  const _CreditNoteLine({
+    required this.name,
+    required this.qty,
+    required this.unitPrice,
+    required this.lineTotal,
+  });
+}
+
+/// Preview + print sheet for the "hati ya marejesho" (credit note) generated
+/// after a return is recorded — same pw.Document/Printing pattern the sales
+/// receipt uses in pos_screen.dart, kept local since only this flow needs it.
+class _CreditNoteSheet extends StatelessWidget {
+  final String businessName;
+  final String creditNoteNo;
+  final Sale sale;
+  final String reason;
+  final List<_CreditNoteLine> lines;
+  final double refundAmount;
+  final double cashRefund;
+
+  const _CreditNoteSheet({
+    required this.businessName,
+    required this.creditNoteNo,
+    required this.sale,
+    required this.reason,
+    required this.lines,
+    required this.refundAmount,
+    required this.cashRefund,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final fmt = NumberFormat('#,###', 'en_US');
+    final dateFmt = DateFormat('dd MMM yyyy, HH:mm');
+    final balanceReduction = refundAmount - cashRefund;
+    return DraggableScrollableSheet(
+      initialChildSize: 0.78,
+      minChildSize: 0.5,
+      maxChildSize: 0.95,
+      builder: (ctx, scroll) => Container(
+        decoration: BoxDecoration(
+          color: AppColors.bgCard,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+        ),
+        child: Column(
+          children: [
+            Container(
+              width: 46, height: 4,
+              margin: const EdgeInsets.symmetric(vertical: 12),
+              decoration: BoxDecoration(color: AppColors.border, borderRadius: BorderRadius.circular(8)),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(18, 0, 12, 10),
+              child: Row(children: [
+                Icon(Icons.receipt_long_rounded, color: AppColors.chartBlue, size: 22),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text('Hati ya Marejesho', style: TextStyle(color: AppColors.textWhite, fontSize: 16, fontWeight: FontWeight.w800)),
+                    Text(creditNoteNo, style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
+                  ]),
+                ),
+                IconButton(onPressed: () => Navigator.pop(context), icon: Icon(Icons.close_rounded, color: AppColors.textMuted)),
+              ]),
+            ),
+            Divider(color: AppColors.border, height: 1),
+            Expanded(
+              child: ListView(
+                controller: scroll,
+                padding: const EdgeInsets.fromLTRB(18, 14, 18, 14),
+                children: [
+                  Text(businessName, style: TextStyle(color: AppColors.textWhite, fontWeight: FontWeight.w700, fontSize: 15)),
+                  const SizedBox(height: 4),
+                  Text('Mauzo asili: ${sale.saleNo.isNotEmpty ? sale.saleNo : '#${sale.saleId}'}', style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
+                  Text(dateFmt.format(DateTime.now()), style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
+                  if (sale.customerName.isNotEmpty)
+                    Text('Mteja: ${sale.customerName}', style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
+                  if (reason.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Text('Sababu: $reason', style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
+                    ),
+                  const SizedBox(height: 12),
+                  Container(
+                    decoration: BoxDecoration(
+                      color: AppColors.bg,
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: AppColors.border),
+                    ),
+                    padding: const EdgeInsets.all(12),
+                    child: Column(
+                      children: lines.map((l) => Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 5),
+                        child: Row(children: [
+                          Expanded(
+                            child: Text('${l.name}\n${_qtyStr(l.qty)} x TZS ${fmt.format(l.unitPrice)}',
+                                style: TextStyle(color: AppColors.textWhite, fontSize: 12.5)),
+                          ),
+                          Text('TZS ${fmt.format(l.lineTotal)}',
+                              style: TextStyle(color: AppColors.textWhite, fontWeight: FontWeight.w700, fontSize: 12.5)),
+                        ]),
+                      )).toList(),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  _moneyRow('Jumla ya marejesho', refundAmount, bold: true),
+                  if (balanceReduction > 0) _moneyRow('Imepunguza deni', balanceReduction),
+                  if (cashRefund > 0) _moneyRow('Kurudishiwa taslimu', cashRefund, color: AppColors.chartOrange, bold: true),
+                ],
+              ),
+            ),
+            Padding(
+              padding: EdgeInsets.fromLTRB(16, 8, 16, 12 + MediaQuery.of(context).padding.bottom),
+              child: SizedBox(
+                width: double.infinity,
+                height: 48,
+                child: ElevatedButton.icon(
+                  onPressed: () => _printPdf(fmt, dateFmt, balanceReduction),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.chartBlue, foregroundColor: Colors.white, elevation: 0,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                  icon: const Icon(Icons.print_rounded, size: 18),
+                  label: const Text('Chapisha Hati', style: TextStyle(fontWeight: FontWeight.w800)),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _qtyStr(double q) => q == q.roundToDouble() ? q.toInt().toString() : q.toStringAsFixed(1);
+
+  Widget _moneyRow(String k, double v, {bool bold = false, Color? color}) {
+    final fmt = NumberFormat('#,###', 'en_US');
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+        Text(k, style: TextStyle(color: color ?? AppColors.textMuted, fontWeight: bold ? FontWeight.w800 : FontWeight.w500, fontSize: 13)),
+        Text('TZS ${fmt.format(v)}', style: TextStyle(color: color ?? AppColors.textWhite, fontWeight: bold ? FontWeight.w800 : FontWeight.w600, fontSize: 13)),
+      ]),
+    );
+  }
+
+  Future<void> _printPdf(NumberFormat fmt, DateFormat dateFmt, double balanceReduction) async {
+    final doc = pw.Document();
+    doc.addPage(
+      pw.Page(
+        pageFormat: PdfPageFormat.roll80,
+        build: (ctx) => pw.Column(
+          crossAxisAlignment: pw.CrossAxisAlignment.stretch,
+          children: [
+            pw.Center(child: pw.Text(businessName.toUpperCase(), style: pw.TextStyle(fontSize: 16, fontWeight: pw.FontWeight.bold))),
+            pw.Center(child: pw.Text('Hati ya Marejesho / Credit Note', style: const pw.TextStyle(fontSize: 9))),
+            pw.SizedBox(height: 8),
+            _pdfRow('Namba', creditNoteNo),
+            _pdfRow('Tarehe', dateFmt.format(DateTime.now())),
+            _pdfRow('Mauzo asili', sale.saleNo.isNotEmpty ? sale.saleNo : '#${sale.saleId}'),
+            if (sale.customerName.isNotEmpty) _pdfRow('Mteja', sale.customerName),
+            if (reason.isNotEmpty) _pdfRow('Sababu', reason),
+            pw.Divider(),
+            ...lines.map((l) => pw.Padding(
+              padding: const pw.EdgeInsets.only(bottom: 4),
+              child: pw.Row(
+                crossAxisAlignment: pw.CrossAxisAlignment.start,
+                children: [
+                  pw.Expanded(child: pw.Text('${l.name}\n${_qtyStr(l.qty)} x TZS ${fmt.format(l.unitPrice)}', style: const pw.TextStyle(fontSize: 9))),
+                  pw.Text('TZS ${fmt.format(l.lineTotal)}', style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold)),
+                ],
+              ),
+            )),
+            pw.Divider(),
+            _pdfMoney('Jumla ya marejesho', refundAmount, fmt, bold: true),
+            if (balanceReduction > 0) _pdfMoney('Imepunguza deni', balanceReduction, fmt),
+            if (cashRefund > 0) _pdfMoney('Kurudishiwa taslimu', cashRefund, fmt, bold: true),
+            pw.SizedBox(height: 12),
+            pw.Center(child: pw.Text('Asante', textAlign: pw.TextAlign.center, style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 10))),
+          ],
+        ),
+      ),
+    );
+    await Printing.layoutPdf(onLayout: (_) => doc.save());
+  }
+
+  pw.Widget _pdfRow(String k, String v) => pw.Padding(
+        padding: const pw.EdgeInsets.symmetric(vertical: 1),
+        child: pw.Row(children: [
+          pw.Text('$k: ', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 9)),
+          pw.Expanded(child: pw.Text(v, textAlign: pw.TextAlign.right, style: const pw.TextStyle(fontSize: 9))),
+        ]),
+      );
+
+  pw.Widget _pdfMoney(String k, double v, NumberFormat fmt, {bool bold = false}) => pw.Padding(
+        padding: const pw.EdgeInsets.symmetric(vertical: 2),
+        child: pw.Row(
+          mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+          children: [
+            pw.Text(k, style: pw.TextStyle(fontWeight: bold ? pw.FontWeight.bold : pw.FontWeight.normal, fontSize: bold ? 11 : 9)),
+            pw.Text('TZS ${fmt.format(v)}', style: pw.TextStyle(fontWeight: bold ? pw.FontWeight.bold : pw.FontWeight.normal, fontSize: bold ? 11 : 9)),
+          ],
         ),
       );
 }
