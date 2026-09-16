@@ -6,6 +6,7 @@ import '../providers/theme_provider.dart';
 import '../theme/app_theme.dart';
 import '../widgets/first_run_tutorial.dart';
 import '../l10n/app_l10n.dart';
+import 'purchase_orders_screen.dart';
 import 'purchases_screen.dart';
 import 'suppliers_screen.dart';
 
@@ -33,7 +34,7 @@ class _ManageScreenState extends State<ManageScreen>
     super.initState();
     final user = context.read<AppProvider>().user;
     _visible = [
-      if (user == null || user.canManageProducts) ...['categories', 'units', 'suppliers', 'purchases'],
+      if (user == null || user.canManageProducts) ...['categories', 'units', 'suppliers', 'purchase_orders', 'purchases'],
       if (user == null || user.canManageStaff) 'staff',
     ];
     var initIdx = widget.initialTab;
@@ -92,6 +93,7 @@ class _ManageScreenState extends State<ManageScreen>
       ),
       child: TabBar(
         controller: _tab,
+        isScrollable: _visible.length > 4,
         indicator: BoxDecoration(
           gradient: onGradient
               ? const LinearGradient(colors: [Colors.white, Colors.white])
@@ -120,6 +122,11 @@ class _ManageScreenState extends State<ManageScreen>
               Tab(
                 icon: const Icon(Icons.local_shipping_outlined, size: 16),
                 text: l.isSw ? 'Wasambazaji' : 'Suppliers',
+              )
+            else if (t == 'purchase_orders')
+              Tab(
+                icon: const Icon(Icons.request_quote_outlined, size: 16),
+                text: l.isSw ? 'Maagizo' : 'Orders',
               )
             else if (t == 'purchases')
               Tab(
@@ -163,6 +170,8 @@ class _ManageScreenState extends State<ManageScreen>
                     _UnitTab(desktop: true)
                   else if (t == 'suppliers')
                     const SuppliersScreen(desktop: true)
+                  else if (t == 'purchase_orders')
+                    const PurchaseOrdersScreen(desktop: true)
                   else if (t == 'purchases')
                     const PurchasesScreen(desktop: true)
                   else
@@ -249,6 +258,8 @@ class _ManageScreenState extends State<ManageScreen>
                       _UnitTab(desktop: false)
                     else if (t == 'suppliers')
                       const SuppliersScreen(desktop: false)
+                    else if (t == 'purchase_orders')
+                      const PurchaseOrdersScreen(desktop: false)
                     else if (t == 'purchases')
                       const PurchasesScreen(desktop: false)
                     else

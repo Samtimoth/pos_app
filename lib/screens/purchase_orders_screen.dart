@@ -1,8 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
-import 'package:printing/printing.dart';
-import 'package:pdf/pdf.dart';
-import 'package:pdf/widgets.dart' as pw;
 import 'package:provider/provider.dart';
 
 import '../models/product.dart';
@@ -12,22 +9,22 @@ import '../services/crm_api.dart';
 import '../theme/app_theme.dart';
 import 'suppliers_screen.dart';
 
-/// Manunuzi (purchases): record stock bought from a supplier, track how much
-/// of it is still owed, and record payments against that balance over time.
-class PurchasesScreen extends StatefulWidget {
+/// PO rasmi (Hatua 5): hatua ya KUAGIZA, tofauti na Purchases (kupokea +
+/// kuandikisha kwa pamoja). Draft/Sent hazigusi stock wala deni — 'Pokea'
+/// ndipo inapotengeneza rekodi ya kawaida ya Purchase (stock inaongezeka).
+class PurchaseOrdersScreen extends StatefulWidget {
   final bool desktop;
-  final int? supplierId; // pre-filter to one supplier's purchases
-  const PurchasesScreen({super.key, this.desktop = false, this.supplierId});
+  const PurchaseOrdersScreen({super.key, this.desktop = false});
 
   @override
-  State<PurchasesScreen> createState() => _PurchasesScreenState();
+  State<PurchaseOrdersScreen> createState() => _PurchaseOrdersScreenState();
 }
 
-class _PurchasesScreenState extends State<PurchasesScreen> {
+class _PurchaseOrdersScreenState extends State<PurchaseOrdersScreen> {
   final _fmt = NumberFormat('#,###', 'en_US');
   List<Map<String, dynamic>> _all = [];
   bool _loading = true;
-  String _status = ''; // '' | unpaid | partial | paid
+  String _status = '';
 
   CrmApi? get _crm {
     final app = context.read<AppProvider>();
@@ -51,18 +48,11 @@ class _PurchasesScreenState extends State<PurchasesScreen> {
     }
     setState(() => _loading = true);
     try {
-      final raw = await crm.listPurchases(bizId, supplierId: widget.supplierId,
-          status: _status);
+      final raw = await crm.listPurchaseOrders(bizId, status: _status);
       if (!mounted) return;
-      setState(() {
-        _all = raw;
-        _loading = false;
-      });
+      setState(() { _all = raw; _loading = false; });
     } catch (e) {
-      if (mounted) {
-        setState(() => _loading = false);
-        _snack('$e', AppColors.chartRed);
-      }
+      if (mounted) { setState(() => _loading = false); _snack('$e', AppColors.chartRed); }
     }
   }
 
@@ -81,12 +71,12 @@ class _PurchasesScreenState extends State<PurchasesScreen> {
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (_) => _PurchaseFormSheet(crm: crm, businessId: bizId, presetSupplierId: widget.supplierId),
+      builder: (_) => _PoFormSheet(crm: crm, businessId: bizId),
     );
     if (saved == true) _load();
   }
 
-  Future<void> _openDetail(Map<String, dynamic> p) async {
+  Future<void> _openDetail(Map<String, dynamic> po) async {
     final app = context.read<AppProvider>();
     final bizId = app.selectedBusiness?.businessId;
     final crm = _crm;
@@ -95,21 +85,23 @@ class _PurchasesScreenState extends State<PurchasesScreen> {
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (_) => _PurchaseDetailSheet(crm: crm, businessId: bizId, purchaseId: p['purchase_id'] as int),
+      builder: (_) => _PoDetailSheet(crm: crm, businessId: bizId, poId: po['po_id'] as int),
     );
     if (changed == true) _load();
   }
 
   Color _statusColor(String s) => switch (s) {
-        'paid' => AppColors.accent,
-        'partial' => Colors.orangeAccent,
-        _ => Colors.redAccent,
+        'received' => AppColors.accent,
+        'sent' => AppColors.chartBlue,
+        'cancelled' => AppColors.textMuted,
+        _ => Colors.orangeAccent,
       };
 
   String _statusLabel(String s) => switch (s) {
-        'paid' => 'Imelipwa',
-        'partial' => 'Nusu',
-        _ => 'Haijalipwa',
+        'received' => 'Imepokewa',
+        'sent' => 'Imetumwa',
+        'cancelled' => 'Imefutwa',
+        _ => 'Rasimu',
       };
 
   @override
@@ -125,9 +117,10 @@ class _PurchasesScreenState extends State<PurchasesScreen> {
               padding: const EdgeInsets.fromLTRB(16, 10, 16, 4),
               children: [
                 _chip('Zote', ''),
-                _chip('Haijalipwa', 'unpaid'),
-                _chip('Nusu', 'partial'),
-                _chip('Imelipwa', 'paid'),
+                _chip('Rasimu', 'draft'),
+                _chip('Zilizotumwa', 'sent'),
+                _chip('Zilizopokewa', 'received'),
+                _chip('Zilizofutwa', 'cancelled'),
               ],
             ),
           ),
@@ -135,16 +128,15 @@ class _PurchasesScreenState extends State<PurchasesScreen> {
             child: _loading
                 ? const Center(child: CircularProgressIndicator(color: AppColors.primary))
                 : _all.isEmpty
-                    ? Center(child: Text('Hakuna manunuzi bado', style: TextStyle(color: AppColors.textMuted)))
+                    ? Center(child: Text('Hakuna maagizo (PO) bado', style: TextStyle(color: AppColors.textMuted)))
                     : ListView.separated(
                         padding: const EdgeInsets.fromLTRB(16, 4, 16, 90),
                         itemCount: _all.length,
                         separatorBuilder: (_, _) => const SizedBox(height: 8),
                         itemBuilder: (_, i) {
                           final p = _all[i];
-                          final status = '${p['payment_status'] ?? 'unpaid'}';
+                          final status = '${p['status'] ?? 'draft'}';
                           final total = double.tryParse('${p['subtotal_amount']}') ?? 0;
-                          final balance = double.tryParse('${p['balance_amount']}') ?? 0;
                           return Material(
                             color: AppColors.bgCard,
                             borderRadius: BorderRadius.circular(14),
@@ -165,15 +157,11 @@ class _PurchasesScreenState extends State<PurchasesScreen> {
                                       Text('${p['supplier_name'] ?? 'Bila msambazaji'}',
                                           style: TextStyle(color: AppColors.textWhite, fontWeight: FontWeight.w700, fontSize: 14)),
                                       const SizedBox(height: 2),
-                                      Text('${p['purchase_no']} · bidhaa ${p['item_count']}',
+                                      Text('${p['po_no']} · bidhaa ${p['item_count']}',
                                           style: TextStyle(color: AppColors.textMuted, fontSize: 11)),
                                     ]),
                                   ),
-                                  Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-                                    Text('TZS ${_fmt.format(total)}', style: TextStyle(color: AppColors.textWhite, fontWeight: FontWeight.w700, fontSize: 13)),
-                                    if (balance > 0)
-                                      Text('Deni TZS ${_fmt.format(balance)}', style: TextStyle(color: Colors.orangeAccent, fontSize: 11)),
-                                  ]),
+                                  Text('TZS ${_fmt.format(total)}', style: TextStyle(color: AppColors.textWhite, fontWeight: FontWeight.w700, fontSize: 13)),
                                 ]),
                               ),
                             ),
@@ -186,8 +174,8 @@ class _PurchasesScreenState extends State<PurchasesScreen> {
       floatingActionButton: FloatingActionButton.extended(
         onPressed: _openForm,
         backgroundColor: AppColors.primary,
-        icon: const Icon(Icons.move_to_inbox_outlined, color: Colors.white),
-        label: const Text('Ongeza Ununuzi', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+        icon: const Icon(Icons.playlist_add_rounded, color: Colors.white),
+        label: const Text('Agiza Bidhaa (PO)', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
       ),
     );
   }
@@ -199,10 +187,7 @@ class _PurchasesScreenState extends State<PurchasesScreen> {
       child: ChoiceChip(
         label: Text(label, style: const TextStyle(fontSize: 12)),
         selected: sel,
-        onSelected: (_) {
-          setState(() => _status = value);
-          _load();
-        },
+        onSelected: (_) { setState(() => _status = value); _load(); },
         selectedColor: AppColors.accent.withAlpha(60),
         backgroundColor: AppColors.bgCard,
         labelStyle: TextStyle(color: sel ? AppColors.accent : AppColors.textMuted),
@@ -211,30 +196,28 @@ class _PurchasesScreenState extends State<PurchasesScreen> {
   }
 }
 
-class _PurchaseLine {
+class _PoLine {
   final Product product;
   double qty = 1;
   double cost;
-  _PurchaseLine({required this.product}) : cost = product.buyPrice;
+  _PoLine({required this.product}) : cost = product.buyPrice;
   double get lineTotal => qty * cost;
 }
 
-class _PurchaseFormSheet extends StatefulWidget {
+class _PoFormSheet extends StatefulWidget {
   final CrmApi crm;
   final int businessId;
-  final int? presetSupplierId;
-  const _PurchaseFormSheet({required this.crm, required this.businessId, this.presetSupplierId});
+  const _PoFormSheet({required this.crm, required this.businessId});
 
   @override
-  State<_PurchaseFormSheet> createState() => _PurchaseFormSheetState();
+  State<_PoFormSheet> createState() => _PoFormSheetState();
 }
 
-class _PurchaseFormSheetState extends State<_PurchaseFormSheet> {
+class _PoFormSheetState extends State<_PoFormSheet> {
   final _fmt = NumberFormat('#,###', 'en_US');
   final _searchCtrl = TextEditingController();
-  final _paidCtrl = TextEditingController();
   final _notesCtrl = TextEditingController();
-  final List<_PurchaseLine> _lines = [];
+  final List<_PoLine> _lines = [];
   List<Product> _searchResults = [];
   Supplier? _supplier;
   bool _searching = false;
@@ -245,7 +228,6 @@ class _PurchaseFormSheetState extends State<_PurchaseFormSheet> {
   @override
   void dispose() {
     _searchCtrl.dispose();
-    _paidCtrl.dispose();
     _notesCtrl.dispose();
     super.dispose();
   }
@@ -258,10 +240,7 @@ class _PurchaseFormSheetState extends State<_PurchaseFormSheet> {
   }
 
   Future<void> _search(String q) async {
-    if (q.trim().isEmpty) {
-      setState(() => _searchResults = []);
-      return;
-    }
+    if (q.trim().isEmpty) { setState(() => _searchResults = []); return; }
     setState(() => _searching = true);
     try {
       final app = context.read<AppProvider>();
@@ -278,30 +257,20 @@ class _PurchaseFormSheetState extends State<_PurchaseFormSheet> {
   void _addProduct(Product p) {
     setState(() {
       final idx = _lines.indexWhere((l) => l.product.productId == p.productId);
-      if (idx >= 0) {
-        _lines[idx].qty += 1;
-      } else {
-        _lines.add(_PurchaseLine(product: p));
-      }
+      if (idx >= 0) { _lines[idx].qty += 1; } else { _lines.add(_PoLine(product: p)); }
       _searchCtrl.clear();
       _searchResults = [];
     });
   }
 
   Future<void> _save() async {
-    if (_lines.isEmpty) {
-      _snack('Ongeza angalau bidhaa moja', AppColors.chartOrange);
-      return;
-    }
+    if (_lines.isEmpty) { _snack('Ongeza angalau bidhaa moja', AppColors.chartOrange); return; }
     setState(() => _saving = true);
     try {
-      final res = await widget.crm.createPurchase(
+      final res = await widget.crm.createPurchaseOrder(
         businessId: widget.businessId,
         supplierId: _supplier?.supplierId,
-        items: _lines
-            .map((l) => {'product_id': l.product.productId, 'quantity': l.qty, 'unit_cost': l.cost})
-            .toList(),
-        paidAmount: double.tryParse(_paidCtrl.text.replaceAll(',', '').trim()) ?? 0,
+        items: _lines.map((l) => {'product_id': l.product.productId, 'quantity': l.qty, 'unit_cost': l.cost}).toList(),
         notes: _notesCtrl.text.trim(),
       );
       if (!mounted) return;
@@ -339,7 +308,7 @@ class _PurchaseFormSheetState extends State<_PurchaseFormSheet> {
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 14, 8, 6),
               child: Row(children: [
-                Expanded(child: Text('Ongeza Ununuzi', style: TextStyle(color: AppColors.textWhite, fontSize: 16, fontWeight: FontWeight.w800))),
+                Expanded(child: Text('Agiza Bidhaa (PO)', style: TextStyle(color: AppColors.textWhite, fontSize: 16, fontWeight: FontWeight.w800))),
                 IconButton(onPressed: () => Navigator.pop(context), icon: Icon(Icons.close_rounded, color: AppColors.textMuted)),
               ]),
             ),
@@ -348,6 +317,17 @@ class _PurchaseFormSheetState extends State<_PurchaseFormSheet> {
               child: SingleChildScrollView(
                 padding: const EdgeInsets.fromLTRB(20, 14, 20, 14),
                 child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                    margin: const EdgeInsets.only(bottom: 14),
+                    decoration: BoxDecoration(color: AppColors.chartBlue.withAlpha(20), borderRadius: BorderRadius.circular(10)),
+                    child: Row(children: [
+                      Icon(Icons.info_outline_rounded, size: 16, color: AppColors.chartBlue),
+                      const SizedBox(width: 8),
+                      Expanded(child: Text('PO haiongezi stock wala deni — inakuwa hai tu ukiipokea baadaye.',
+                          style: TextStyle(color: AppColors.chartBlue, fontSize: 11))),
+                    ]),
+                  ),
                   InkWell(
                     onTap: _pickSupplier,
                     borderRadius: BorderRadius.circular(12),
@@ -370,7 +350,7 @@ class _PurchaseFormSheetState extends State<_PurchaseFormSheet> {
                     controller: _searchCtrl,
                     style: TextStyle(color: AppColors.textWhite),
                     decoration: InputDecoration(
-                      hintText: 'Tafuta bidhaa ya kuongeza...',
+                      hintText: 'Tafuta bidhaa ya kuagiza...',
                       hintStyle: TextStyle(color: AppColors.textMuted),
                       prefixIcon: Icon(Icons.search_rounded, color: AppColors.textMuted),
                       filled: true, fillColor: AppColors.bg,
@@ -409,24 +389,9 @@ class _PurchaseFormSheetState extends State<_PurchaseFormSheet> {
                     ..._lines.asMap().entries.map((e) => _lineRow(e.key, e.value)),
                     const Divider(height: 24),
                     Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-                      Text('Jumla', style: TextStyle(color: AppColors.textWhite, fontWeight: FontWeight.w800)),
+                      Text('Jumla ya PO', style: TextStyle(color: AppColors.textWhite, fontWeight: FontWeight.w800)),
                       Text('TZS ${_fmt.format(_subtotal)}', style: TextStyle(color: AppColors.primary, fontWeight: FontWeight.w800, fontSize: 16)),
                     ]),
-                    const SizedBox(height: 14),
-                    TextField(
-                      controller: _paidCtrl,
-                      keyboardType: TextInputType.number,
-                      style: TextStyle(color: AppColors.textWhite),
-                      decoration: InputDecoration(
-                        labelText: 'Kiasi ulicholipa sasa (hiari)',
-                        labelStyle: TextStyle(color: AppColors.textMuted, fontSize: 12),
-                        hintText: 'Ukiacha wazi, deni lote litabaki',
-                        hintStyle: TextStyle(color: AppColors.textMuted, fontSize: 11),
-                        filled: true, fillColor: AppColors.bg,
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: AppColors.border)),
-                        enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: AppColors.border)),
-                      ),
-                    ),
                     const SizedBox(height: 12),
                     TextField(
                       controller: _notesCtrl,
@@ -454,7 +419,7 @@ class _PurchaseFormSheetState extends State<_PurchaseFormSheet> {
                   icon: _saving
                       ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
                       : const Icon(Icons.check_rounded),
-                  label: Text(_saving ? 'Inahifadhi...' : 'Hifadhi Ununuzi', style: const TextStyle(fontWeight: FontWeight.bold)),
+                  label: Text(_saving ? 'Inahifadhi...' : 'Hifadhi PO', style: const TextStyle(fontWeight: FontWeight.bold)),
                 ),
               ),
             ),
@@ -464,7 +429,7 @@ class _PurchaseFormSheetState extends State<_PurchaseFormSheet> {
     );
   }
 
-  Widget _lineRow(int i, _PurchaseLine line) {
+  Widget _lineRow(int i, _PoLine line) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: Container(
@@ -510,22 +475,22 @@ class _PurchaseFormSheetState extends State<_PurchaseFormSheet> {
   }
 }
 
-class _PurchaseDetailSheet extends StatefulWidget {
+class _PoDetailSheet extends StatefulWidget {
   final CrmApi crm;
   final int businessId;
-  final int purchaseId;
-  const _PurchaseDetailSheet({required this.crm, required this.businessId, required this.purchaseId});
+  final int poId;
+  const _PoDetailSheet({required this.crm, required this.businessId, required this.poId});
 
   @override
-  State<_PurchaseDetailSheet> createState() => _PurchaseDetailSheetState();
+  State<_PoDetailSheet> createState() => _PoDetailSheetState();
 }
 
-class _PurchaseDetailSheetState extends State<_PurchaseDetailSheet> {
+class _PoDetailSheetState extends State<_PoDetailSheet> {
   final _fmt = NumberFormat('#,###', 'en_US');
-  Map<String, dynamic>? _purchase;
+  Map<String, dynamic>? _po;
   List<Map<String, dynamic>> _items = [];
-  List<Map<String, dynamic>> _payments = [];
   bool _loading = true;
+  bool _busy = false;
   bool _changed = false;
 
   @override
@@ -537,13 +502,12 @@ class _PurchaseDetailSheetState extends State<_PurchaseDetailSheet> {
   Future<void> _load() async {
     setState(() => _loading = true);
     try {
-      final r = await widget.crm.getPurchase(widget.businessId, widget.purchaseId);
+      final r = await widget.crm.getPurchaseOrder(widget.businessId, widget.poId);
       if (!mounted) return;
       if (r['success'] == true) {
         setState(() {
-          _purchase = Map<String, dynamic>.from(r['purchase'] as Map);
+          _po = Map<String, dynamic>.from(r['purchase_order'] as Map);
           _items = ((r['items'] as List?) ?? []).map((e) => Map<String, dynamic>.from(e as Map)).toList();
-          _payments = ((r['payments'] as List?) ?? []).map((e) => Map<String, dynamic>.from(e as Map)).toList();
         });
       }
     } catch (_) {
@@ -552,66 +516,107 @@ class _PurchaseDetailSheetState extends State<_PurchaseDetailSheet> {
     }
   }
 
-  Future<void> _recordPayment() async {
-    final balance = double.tryParse('${_purchase?['balance_amount']}') ?? 0;
-    if (balance <= 0) return;
+  void _snack(String msg, Color color) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(msg), backgroundColor: color, behavior: SnackBarBehavior.floating),
+    );
+  }
+
+  Future<void> _send() async {
+    setState(() => _busy = true);
+    try {
+      final r = await widget.crm.sendPurchaseOrder(widget.businessId, widget.poId);
+      if (!mounted) return;
+      if (r['success'] == true) { _changed = true; _load(); } else { _snack('${r['message'] ?? 'Hitilafu'}', AppColors.chartRed); }
+    } catch (e) {
+      if (mounted) _snack('$e', AppColors.chartRed);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _cancel() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: AppColors.bgCard,
+        title: Text('Futa PO?', style: TextStyle(color: AppColors.textWhite, fontSize: 16)),
+        content: Text('Hatua hii haiwezi kutenduliwa.', style: TextStyle(color: AppColors.textMuted)),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: Text('Ghairi', style: TextStyle(color: AppColors.textMuted))),
+          TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Futa', style: TextStyle(color: Colors.redAccent))),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    setState(() => _busy = true);
+    try {
+      final r = await widget.crm.cancelPurchaseOrder(widget.businessId, widget.poId);
+      if (!mounted) return;
+      if (r['success'] == true) { _changed = true; _load(); } else { _snack('${r['message'] ?? 'Hitilafu'}', AppColors.chartRed); }
+    } catch (e) {
+      if (mounted) _snack('$e', AppColors.chartRed);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _receive() async {
+    final subtotal = double.tryParse('${_po?['subtotal_amount']}') ?? 0;
     final ctrl = TextEditingController();
-    final amount = await showDialog<double>(
+    final paid = await showDialog<double>(
       context: context,
       builder: (_) => AlertDialog(
         backgroundColor: AppColors.bgCard,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: Text('Lipa Msambazaji', style: TextStyle(color: AppColors.textWhite, fontSize: 16)),
+        title: Text('Pokea PO', style: TextStyle(color: AppColors.textWhite, fontSize: 16)),
         content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text('Deni lililobaki: TZS ${_fmt.format(balance)}', style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
+          Text('Bidhaa zilizoagizwa zitaongezwa kwenye stock. Jumla: TZS ${_fmt.format(subtotal)}',
+              style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
           const SizedBox(height: 10),
           TextField(
             controller: ctrl,
             autofocus: true,
             keyboardType: TextInputType.number,
             style: TextStyle(color: AppColors.textWhite),
-            decoration: InputDecoration(hintText: 'Kiasi', hintStyle: TextStyle(color: AppColors.textMuted)),
+            decoration: InputDecoration(hintText: 'Kiasi ulicholipa sasa (hiari)', hintStyle: TextStyle(color: AppColors.textMuted)),
           ),
         ]),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context), child: Text('Ghairi', style: TextStyle(color: AppColors.textMuted))),
           ElevatedButton(
-            onPressed: () => Navigator.pop(context, double.tryParse(ctrl.text.replaceAll(',', '').trim())),
-            child: const Text('Lipa'),
+            onPressed: () => Navigator.pop(context, double.tryParse(ctrl.text.replaceAll(',', '').trim()) ?? 0),
+            child: const Text('Pokea'),
           ),
         ],
       ),
     );
-    if (amount == null || amount <= 0 || !mounted) return;
+    if (paid == null || !mounted) return;
+    setState(() => _busy = true);
     try {
-      final r = await widget.crm.recordPurchasePayment(businessId: widget.businessId, purchaseId: widget.purchaseId, amount: amount);
+      final r = await widget.crm.receivePurchaseOrder(businessId: widget.businessId, poId: widget.poId, paidAmount: paid);
       if (!mounted) return;
       if (r['success'] == true) {
         _changed = true;
+        _snack('✅ PO imepokewa — stock imeongezwa', AppColors.accent);
         _load();
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('${r['message'] ?? 'Hitilafu'}'), backgroundColor: AppColors.chartRed, behavior: SnackBarBehavior.floating),
-        );
+        _snack('${r['message'] ?? 'Hitilafu'}', AppColors.chartRed);
       }
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('$e'), backgroundColor: AppColors.chartRed, behavior: SnackBarBehavior.floating),
-        );
-      }
+      if (mounted) _snack('$e', AppColors.chartRed);
+    } finally {
+      if (mounted) setState(() => _busy = false);
     }
   }
 
   @override
   Widget build(BuildContext context) {
     final mq = MediaQuery.of(context);
-    final balance = double.tryParse('${_purchase?['balance_amount']}') ?? 0;
+    final status = '${_po?['status'] ?? 'draft'}';
     return PopScope(
       canPop: false,
-      onPopInvokedWithResult: (didPop, _) {
-        if (!didPop) Navigator.pop(context, _changed);
-      },
+      onPopInvokedWithResult: (didPop, _) { if (!didPop) Navigator.pop(context, _changed); },
       child: Padding(
         padding: EdgeInsets.only(bottom: mq.viewInsets.bottom),
         child: Container(
@@ -629,11 +634,10 @@ class _PurchaseDetailSheetState extends State<_PurchaseDetailSheet> {
                       child: Row(children: [
                         Expanded(
                           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                            Text('${_purchase?['purchase_no'] ?? ''}', style: TextStyle(color: AppColors.textWhite, fontSize: 16, fontWeight: FontWeight.w800)),
-                            Text('${_purchase?['supplier_name'] ?? 'Bila msambazaji'}', style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
+                            Text('${_po?['po_no'] ?? ''}', style: TextStyle(color: AppColors.textWhite, fontSize: 16, fontWeight: FontWeight.w800)),
+                            Text('${_po?['supplier_name'] ?? 'Bila msambazaji'}', style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
                           ]),
                         ),
-                        IconButton(onPressed: _printInvoice, icon: Icon(Icons.print_outlined, color: AppColors.textMuted)),
                         IconButton(onPressed: () => Navigator.pop(context, _changed), icon: Icon(Icons.close_rounded, color: AppColors.textMuted)),
                       ]),
                     ),
@@ -651,36 +655,57 @@ class _PurchaseDetailSheetState extends State<_PurchaseDetailSheet> {
                                 ]),
                               )),
                           const Divider(height: 24),
-                          _moneyRow('Jumla', double.tryParse('${_purchase?['subtotal_amount']}') ?? 0, bold: true),
-                          _moneyRow('Amelipwa', double.tryParse('${_purchase?['paid_amount']}') ?? 0),
-                          if (balance > 0) _moneyRow('Deni lililobaki', balance, color: Colors.orangeAccent, bold: true),
-                          if (_payments.isNotEmpty) ...[
-                            const SizedBox(height: 14),
-                            Text('Historia ya Malipo', style: TextStyle(color: AppColors.textMuted, fontSize: 12, fontWeight: FontWeight.w600)),
-                            const SizedBox(height: 6),
-                            ..._payments.map((p) => Padding(
-                                  padding: const EdgeInsets.only(bottom: 4),
-                                  child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-                                    Text('${p['created_at']}', style: TextStyle(color: AppColors.textMuted, fontSize: 11)),
-                                    Text('TZS ${_fmt.format(double.tryParse('${p['amount']}') ?? 0)}', style: TextStyle(color: AppColors.accent, fontSize: 12, fontWeight: FontWeight.w700)),
-                                  ]),
-                                )),
-                          ],
+                          Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                            Text('Jumla ya PO', style: TextStyle(color: AppColors.textWhite, fontWeight: FontWeight.w800)),
+                            Text('TZS ${_fmt.format(double.tryParse('${_po?['subtotal_amount']}') ?? 0)}',
+                                style: TextStyle(color: AppColors.primary, fontWeight: FontWeight.w800, fontSize: 15)),
+                          ]),
+                          if (status == 'received')
+                            Padding(
+                              padding: const EdgeInsets.only(top: 8),
+                              child: Text('✅ Imepokewa — angalia kwenye Manunuzi kwa maelezo ya malipo.',
+                                  style: TextStyle(color: AppColors.accent, fontSize: 12)),
+                            ),
+                          if (status == 'cancelled')
+                            Padding(
+                              padding: const EdgeInsets.only(top: 8),
+                              child: Text('Imefutwa.', style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
+                            ),
                         ],
                       ),
                     ),
-                    if (balance > 0)
+                    if (status == 'draft' || status == 'sent')
                       Padding(
                         padding: EdgeInsets.fromLTRB(20, 8, 20, 12 + mq.padding.bottom),
-                        child: SizedBox(
-                          width: double.infinity, height: 48,
-                          child: ElevatedButton.icon(
-                            onPressed: _recordPayment,
-                            style: ElevatedButton.styleFrom(backgroundColor: AppColors.chartBlue, foregroundColor: Colors.white),
-                            icon: const Icon(Icons.payments_rounded),
-                            label: const Text('Lipa Msambazaji', style: TextStyle(fontWeight: FontWeight.bold)),
+                        child: Row(children: [
+                          if (status == 'draft')
+                            Expanded(
+                              child: OutlinedButton.icon(
+                                onPressed: _busy ? null : _send,
+                                icon: const Icon(Icons.send_rounded, size: 16),
+                                label: const Text('Tuma'),
+                              ),
+                            ),
+                          if (status == 'draft') const SizedBox(width: 8),
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              onPressed: _busy ? null : _cancel,
+                              style: OutlinedButton.styleFrom(foregroundColor: Colors.redAccent),
+                              icon: const Icon(Icons.close_rounded, size: 16),
+                              label: const Text('Futa'),
+                            ),
                           ),
-                        ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            flex: 2,
+                            child: ElevatedButton.icon(
+                              onPressed: _busy ? null : _receive,
+                              style: ElevatedButton.styleFrom(backgroundColor: AppColors.accent, foregroundColor: AppColors.bgDark),
+                              icon: const Icon(Icons.move_to_inbox_rounded, size: 16),
+                              label: const Text('Pokea', style: TextStyle(fontWeight: FontWeight.bold)),
+                            ),
+                          ),
+                        ]),
                       ),
                   ],
                 ),
@@ -688,79 +713,4 @@ class _PurchaseDetailSheetState extends State<_PurchaseDetailSheet> {
       ),
     );
   }
-
-  Widget _moneyRow(String k, double v, {bool bold = false, Color? color}) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 3),
-        child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-          Text(k, style: TextStyle(color: color ?? AppColors.textMuted, fontWeight: bold ? FontWeight.w800 : FontWeight.w500, fontSize: 13)),
-          Text('TZS ${_fmt.format(v)}', style: TextStyle(color: color ?? AppColors.textWhite, fontWeight: bold ? FontWeight.w800 : FontWeight.w600, fontSize: 13)),
-        ]),
-      );
-
-  /// Invoice rasmi ya msambazaji (Hatua 5) — hati ya kuchapisha yenye
-  /// muundo wa kawaida wa invoice (bidhaa, bei, jumla, kilicholipwa, deni).
-  Future<void> _printInvoice() async {
-    final p = _purchase;
-    if (p == null) return;
-    final businessName = context.read<AppProvider>().selectedBusiness?.businessName ?? '';
-    final subtotal = double.tryParse('${p['subtotal_amount']}') ?? 0;
-    final paid = double.tryParse('${p['paid_amount']}') ?? 0;
-    final balance = double.tryParse('${p['balance_amount']}') ?? 0;
-    final doc = pw.Document();
-    doc.addPage(
-      pw.MultiPage(
-        pageFormat: PdfPageFormat.a4,
-        build: (ctx) => [
-          pw.Center(child: pw.Text(businessName.toUpperCase(), style: pw.TextStyle(fontSize: 16, fontWeight: pw.FontWeight.bold))),
-          pw.Center(child: pw.Text('INVOICE YA MANUNUZI', style: const pw.TextStyle(fontSize: 10))),
-          pw.SizedBox(height: 10),
-          pw.Row(mainAxisAlignment: pw.MainAxisAlignment.spaceBetween, children: [
-            pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.start, children: [
-              pw.Text('Msambazaji: ${p['supplier_name'] ?? 'Bila msambazaji'}', style: const pw.TextStyle(fontSize: 10)),
-              pw.Text('Namba: ${p['purchase_no'] ?? ''}', style: const pw.TextStyle(fontSize: 10)),
-            ]),
-            pw.Text('Tarehe: ${p['created_at'] ?? ''}', style: const pw.TextStyle(fontSize: 10)),
-          ]),
-          pw.SizedBox(height: 12),
-          pw.Table(
-            border: pw.TableBorder.all(color: PdfColors.grey400, width: 0.5),
-            columnWidths: const {0: pw.FlexColumnWidth(3), 1: pw.FlexColumnWidth(1.3), 2: pw.FlexColumnWidth(1.6), 3: pw.FlexColumnWidth(1.6)},
-            children: [
-              pw.TableRow(decoration: const pw.BoxDecoration(color: PdfColors.grey200), children: [
-                _pdfCell('Bidhaa', bold: true), _pdfCell('Kiasi', bold: true),
-                _pdfCell('Bei/kipimo', bold: true, align: pw.TextAlign.right), _pdfCell('Jumla', bold: true, align: pw.TextAlign.right),
-              ]),
-              for (final it in _items)
-                pw.TableRow(children: [
-                  _pdfCell('${it['product_name']}'),
-                  _pdfCell('${it['quantity']}'),
-                  _pdfCell(_fmt.format(double.tryParse('${it['unit_cost']}') ?? 0), align: pw.TextAlign.right),
-                  _pdfCell(_fmt.format(double.tryParse('${it['line_total']}') ?? 0), align: pw.TextAlign.right),
-                ]),
-            ],
-          ),
-          pw.SizedBox(height: 14),
-          pw.Align(alignment: pw.Alignment.centerRight, child: pw.SizedBox(width: 220, child: pw.Column(children: [
-            _pdfMoneyRow('Jumla', subtotal, bold: true),
-            _pdfMoneyRow('Kimelipwa', paid),
-            if (balance > 0) _pdfMoneyRow('Deni', balance, bold: true),
-          ]))),
-        ],
-      ),
-    );
-    await Printing.layoutPdf(onLayout: (_) => doc.save());
-  }
-
-  pw.Widget _pdfCell(String text, {bool bold = false, pw.TextAlign align = pw.TextAlign.left}) => pw.Padding(
-        padding: const pw.EdgeInsets.symmetric(horizontal: 5, vertical: 4),
-        child: pw.Text(text, textAlign: align, style: pw.TextStyle(fontSize: 9, fontWeight: bold ? pw.FontWeight.bold : pw.FontWeight.normal)),
-      );
-
-  pw.Widget _pdfMoneyRow(String k, double v, {bool bold = false}) => pw.Padding(
-        padding: const pw.EdgeInsets.symmetric(vertical: 2),
-        child: pw.Row(mainAxisAlignment: pw.MainAxisAlignment.spaceBetween, children: [
-          pw.Text(k, style: pw.TextStyle(fontSize: bold ? 11 : 9, fontWeight: bold ? pw.FontWeight.bold : pw.FontWeight.normal)),
-          pw.Text('TZS ${_fmt.format(v)}', style: pw.TextStyle(fontSize: bold ? 11 : 9, fontWeight: bold ? pw.FontWeight.bold : pw.FontWeight.normal)),
-        ]),
-      );
 }

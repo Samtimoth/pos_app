@@ -242,6 +242,53 @@ class CrmApi {
       });
 
   // ═══════════════════════════════════════════════════════════════════════
+  // PO rasmi (Hatua 5) — hatua ya kuagiza, tofauti na Purchases (ambayo ni
+  // kupokea+kuandikisha kwa pamoja). Draft/sent hazigusi stock wala deni;
+  // 'receive' ndipo inapotengeneza purchase ya kawaida (angalia purchases.php).
+  // ═══════════════════════════════════════════════════════════════════════
+  Future<List<Map<String, dynamic>>> listPurchaseOrders(int businessId, {int? supplierId, String status = ''}) async {
+    final r = await _get('purchase_orders.php', {
+      'action': 'list', 'business_id': '$businessId',
+      if (supplierId != null) 'supplier_id': '$supplierId',
+      if (status.isNotEmpty) 'status': status,
+    });
+    return ((r['purchase_orders'] as List?) ?? []).map((e) => Map<String, dynamic>.from(e as Map)).toList();
+  }
+
+  Future<Map<String, dynamic>> getPurchaseOrder(int businessId, int poId) =>
+      _get('purchase_orders.php', {'action': 'get', 'business_id': '$businessId', 'po_id': '$poId'});
+
+  Future<Map<String, dynamic>> createPurchaseOrder({
+    required int businessId,
+    int? supplierId,
+    required List<Map<String, dynamic>> items,
+    String notes = '',
+  }) {
+    final opId = _uuid.v4();
+    return _post('purchase_orders.php', {
+      'action': 'create', 'business_id': businessId,
+      'supplier_id': ?supplierId,
+      'items': items, 'notes': notes, 'client_op_id': opId,
+    });
+  }
+
+  Future<Map<String, dynamic>> sendPurchaseOrder(int businessId, int poId) =>
+      _post('purchase_orders.php', {'action': 'send', 'business_id': businessId, 'po_id': poId});
+
+  Future<Map<String, dynamic>> cancelPurchaseOrder(int businessId, int poId) =>
+      _post('purchase_orders.php', {'action': 'cancel', 'business_id': businessId, 'po_id': poId});
+
+  Future<Map<String, dynamic>> receivePurchaseOrder({
+    required int businessId,
+    required int poId,
+    List<Map<String, dynamic>>? items,
+    double paidAmount = 0,
+  }) => _post('purchase_orders.php', {
+        'action': 'receive', 'business_id': businessId, 'po_id': poId,
+        'items': ?items, 'paid_amount': paidAmount,
+      });
+
+  // ═══════════════════════════════════════════════════════════════════════
   // Stock ledger
   // ═══════════════════════════════════════════════════════════════════════
   Future<List<Map<String, dynamic>>> stockCard(int businessId, int productId) async {

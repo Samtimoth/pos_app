@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:printing/printing.dart';
+import 'package:pdf/pdf.dart';
+import 'package:pdf/widgets.dart' as pw;
 import 'package:provider/provider.dart';
 
 import '../models/supplier.dart';
@@ -95,6 +98,26 @@ class _SuppliersScreenState extends State<SuppliersScreen> {
     if (saved == true) _load();
   }
 
+  Future<void> _openDetail(Supplier s) async {
+    final app = context.read<AppProvider>();
+    final bizId = app.selectedBusiness?.businessId;
+    final crm = _crm;
+    if (bizId == null || crm == null) return;
+    final changed = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _SupplierDetailSheet(
+        crm: crm,
+        businessId: bizId,
+        supplier: s,
+        businessName: app.selectedBusiness?.businessName ?? '',
+        onEdit: () => _openForm(edit: s),
+      ),
+    );
+    if (changed == true) _load();
+  }
+
   Future<void> _confirmDelete(Supplier s) async {
     final ok = await showDialog<bool>(
       context: context,
@@ -173,7 +196,7 @@ class _SuppliersScreenState extends State<SuppliersScreen> {
                             borderRadius: BorderRadius.circular(14),
                             child: InkWell(
                               borderRadius: BorderRadius.circular(14),
-                              onTap: widget.pickMode ? () => Navigator.pop(context, s) : () => _openForm(edit: s),
+                              onTap: widget.pickMode ? () => Navigator.pop(context, s) : () => _openDetail(s),
                               child: Padding(
                                 padding: const EdgeInsets.all(14),
                                 child: Row(children: [
@@ -369,4 +392,249 @@ class _SupplierFormSheetState extends State<_SupplierFormSheet> {
       ),
     );
   }
+}
+
+/// Taarifa kamili ya msambazaji (supplier statement): manunuzi (debit) na
+/// malipo (credit) yakiwa yamepangwa kwa tarehe na salio linalobadilika
+/// (running balance) — inatoka kwa `suppliers.php?action=get`'s `statement`.
+class _SupplierDetailSheet extends StatefulWidget {
+  final CrmApi crm;
+  final int businessId;
+  final Supplier supplier;
+  final String businessName;
+  final VoidCallback onEdit;
+  const _SupplierDetailSheet({
+    required this.crm,
+    required this.businessId,
+    required this.supplier,
+    required this.businessName,
+    required this.onEdit,
+  });
+
+  @override
+  State<_SupplierDetailSheet> createState() => _SupplierDetailSheetState();
+}
+
+class _SupplierDetailSheetState extends State<_SupplierDetailSheet> {
+  final _fmt = NumberFormat('#,###', 'en_US');
+  final _dateFmt = DateFormat('dd MMM yyyy');
+  Map<String, dynamic>? _data;
+  bool _loading = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() => _loading = true);
+    try {
+      final r = await widget.crm.getSupplier(widget.businessId, widget.supplier.supplierId);
+      if (!mounted) return;
+      setState(() {
+        _data = r['success'] == true ? r : null;
+        _error = r['success'] == true ? null : '${r['message'] ?? 'Hitilafu'}';
+        _loading = false;
+      });
+    } catch (e) {
+      if (mounted) setState(() { _error = '$e'; _loading = false; });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final s = widget.supplier;
+    final statement = ((_data?['statement'] as List?) ?? []).cast<Map<String, dynamic>>();
+    final summary = (_data?['summary'] as Map?)?.cast<String, dynamic>() ?? {};
+    final totalOwed = double.tryParse('${summary['total_owed'] ?? s.totalOwed}') ?? s.totalOwed;
+    final totalSpent = double.tryParse('${summary['total_spent'] ?? s.totalSpent}') ?? s.totalSpent;
+
+    return DraggableScrollableSheet(
+      initialChildSize: 0.82,
+      minChildSize: 0.5,
+      maxChildSize: 0.95,
+      builder: (ctx, scroll) => Container(
+        decoration: BoxDecoration(color: AppColors.bgCard, borderRadius: const BorderRadius.vertical(top: Radius.circular(28))),
+        child: Column(children: [
+          Container(width: 46, height: 4, margin: const EdgeInsets.symmetric(vertical: 12),
+              decoration: BoxDecoration(color: AppColors.border, borderRadius: BorderRadius.circular(8))),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(18, 0, 12, 10),
+            child: Row(children: [
+              Container(
+                width: 42, height: 42,
+                decoration: BoxDecoration(color: AppColors.chartBlue.withAlpha(28), borderRadius: BorderRadius.circular(12)),
+                child: Icon(Icons.local_shipping_outlined, color: AppColors.chartBlue, size: 20),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text(s.name, style: TextStyle(color: AppColors.textWhite, fontSize: 16, fontWeight: FontWeight.w800)),
+                  if (s.phone.isNotEmpty) Text(s.phone, style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
+                ]),
+              ),
+              IconButton(onPressed: widget.onEdit, icon: Icon(Icons.edit_outlined, color: AppColors.textMuted)),
+              IconButton(onPressed: () => Navigator.pop(context), icon: Icon(Icons.close_rounded, color: AppColors.textMuted)),
+            ]),
+          ),
+          Divider(color: AppColors.border, height: 1),
+          Expanded(
+            child: _loading
+                ? const Center(child: CircularProgressIndicator(color: AppColors.primary))
+                : _error != null
+                    ? Center(child: Text(_error!, style: TextStyle(color: AppColors.chartRed)))
+                    : ListView(
+                        controller: scroll,
+                        padding: const EdgeInsets.fromLTRB(18, 14, 18, 14),
+                        children: [
+                          Row(children: [
+                            Expanded(
+                              child: _statCard('Jumla ya Manunuzi', 'TZS ${_fmt.format(totalSpent)}', AppColors.chartBlue),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: _statCard('Deni Lililopo', 'TZS ${_fmt.format(totalOwed)}',
+                                  totalOwed > 0 ? AppColors.chartOrange : AppColors.accent),
+                            ),
+                          ]),
+                          const SizedBox(height: 16),
+                          Text('Taarifa ya Malipo (Statement)', style: TextStyle(color: AppColors.textWhite, fontWeight: FontWeight.w800, fontSize: 14)),
+                          const SizedBox(height: 8),
+                          if (statement.isEmpty)
+                            Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 30),
+                              child: Center(child: Text('Hakuna miamala bado', style: TextStyle(color: AppColors.textMuted))),
+                            )
+                          else
+                            Container(
+                              decoration: BoxDecoration(color: AppColors.bg, borderRadius: BorderRadius.circular(14), border: Border.all(color: AppColors.border)),
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                              child: Column(children: [
+                                for (final row in statement) _statementRow(row),
+                              ]),
+                            ),
+                        ],
+                      ),
+          ),
+          Padding(
+            padding: EdgeInsets.fromLTRB(16, 8, 16, 12 + MediaQuery.of(context).padding.bottom),
+            child: SizedBox(
+              width: double.infinity,
+              height: 48,
+              child: ElevatedButton.icon(
+                onPressed: statement.isEmpty ? null : () => _printStatement(statement, totalOwed),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.chartBlue, foregroundColor: Colors.white, elevation: 0,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+                icon: const Icon(Icons.print_rounded, size: 18),
+                label: const Text('Chapisha Taarifa', style: TextStyle(fontWeight: FontWeight.w800)),
+              ),
+            ),
+          ),
+        ]),
+      ),
+    );
+  }
+
+  Widget _statCard(String label, String value, Color color) => Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(color: AppColors.bg, borderRadius: BorderRadius.circular(14), border: Border.all(color: AppColors.border)),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(label, style: TextStyle(color: AppColors.textMuted, fontSize: 11, fontWeight: FontWeight.w600)),
+          const SizedBox(height: 4),
+          FittedBox(fit: BoxFit.scaleDown, alignment: Alignment.centerLeft,
+              child: Text(value, style: TextStyle(color: color, fontSize: 15, fontWeight: FontWeight.w800))),
+        ]),
+      );
+
+  Widget _statementRow(Map<String, dynamic> row) {
+    final isPurchase = row['type'] == 'purchase';
+    final debit = double.tryParse('${row['debit'] ?? 0}') ?? 0;
+    final credit = double.tryParse('${row['credit'] ?? 0}') ?? 0;
+    final balance = double.tryParse('${row['balance'] ?? 0}') ?? 0;
+    final date = DateTime.tryParse('${row['date']}');
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 7),
+      child: Row(children: [
+        Icon(isPurchase ? Icons.move_to_inbox_outlined : Icons.payments_outlined,
+            size: 16, color: isPurchase ? AppColors.chartOrange : AppColors.accent),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(isPurchase ? 'Ununuzi ${row['ref'] ?? ''}' : 'Malipo — ${row['ref'] ?? ''}',
+                style: TextStyle(color: AppColors.textWhite, fontSize: 12.5, fontWeight: FontWeight.w600)),
+            Text(date == null ? '${row['date']}' : _dateFmt.format(date), style: TextStyle(color: AppColors.textMuted, fontSize: 10.5)),
+          ]),
+        ),
+        Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+          Text(isPurchase ? '+${_fmt.format(debit)}' : '-${_fmt.format(credit)}',
+              style: TextStyle(color: isPurchase ? AppColors.chartOrange : AppColors.accent, fontSize: 12.5, fontWeight: FontWeight.w700)),
+          Text('Salio: ${_fmt.format(balance)}', style: TextStyle(color: AppColors.textMuted, fontSize: 10)),
+        ]),
+      ]),
+    );
+  }
+
+  Future<void> _printStatement(List<Map<String, dynamic>> statement, double totalOwed) async {
+    final doc = pw.Document();
+    doc.addPage(
+      pw.MultiPage(
+        pageFormat: PdfPageFormat.a4,
+        build: (ctx) => [
+          pw.Center(child: pw.Text(widget.businessName.toUpperCase(), style: pw.TextStyle(fontSize: 16, fontWeight: pw.FontWeight.bold))),
+          pw.Center(child: pw.Text('Taarifa ya Malipo — Msambazaji', style: const pw.TextStyle(fontSize: 10))),
+          pw.SizedBox(height: 10),
+          pw.Text('Msambazaji: ${widget.supplier.name}', style: const pw.TextStyle(fontSize: 10)),
+          if (widget.supplier.phone.isNotEmpty) pw.Text('Simu: ${widget.supplier.phone}', style: const pw.TextStyle(fontSize: 10)),
+          pw.Text('Tarehe: ${DateFormat('dd MMM yyyy, HH:mm').format(DateTime.now())}', style: const pw.TextStyle(fontSize: 10)),
+          pw.SizedBox(height: 12),
+          pw.Table(
+            border: pw.TableBorder.all(color: PdfColors.grey400, width: 0.5),
+            columnWidths: const {
+              0: pw.FlexColumnWidth(2.2),
+              1: pw.FlexColumnWidth(2),
+              2: pw.FlexColumnWidth(1.6),
+              3: pw.FlexColumnWidth(1.6),
+              4: pw.FlexColumnWidth(1.6),
+            },
+            children: [
+              pw.TableRow(
+                decoration: const pw.BoxDecoration(color: PdfColors.grey200),
+                children: [
+                  _pdfCell('Tarehe', bold: true),
+                  _pdfCell('Maelezo', bold: true),
+                  _pdfCell('Debit', bold: true, align: pw.TextAlign.right),
+                  _pdfCell('Credit', bold: true, align: pw.TextAlign.right),
+                  _pdfCell('Salio', bold: true, align: pw.TextAlign.right),
+                ],
+              ),
+              for (final row in statement)
+                pw.TableRow(children: [
+                  _pdfCell(DateFormat('dd/MM/yy').format(DateTime.tryParse('${row['date']}') ?? DateTime.now())),
+                  _pdfCell(row['type'] == 'purchase' ? 'Ununuzi ${row['ref'] ?? ''}' : 'Malipo — ${row['ref'] ?? ''}'),
+                  _pdfCell(((double.tryParse('${row['debit'] ?? 0}') ?? 0) > 0) ? _fmt.format(row['debit']) : '', align: pw.TextAlign.right),
+                  _pdfCell(((double.tryParse('${row['credit'] ?? 0}') ?? 0) > 0) ? _fmt.format(row['credit']) : '', align: pw.TextAlign.right),
+                  _pdfCell(_fmt.format(double.tryParse('${row['balance'] ?? 0}') ?? 0), align: pw.TextAlign.right),
+                ]),
+            ],
+          ),
+          pw.SizedBox(height: 14),
+          pw.Align(
+            alignment: pw.Alignment.centerRight,
+            child: pw.Text('Deni Lililopo: TZS ${_fmt.format(totalOwed)}',
+                style: pw.TextStyle(fontSize: 12, fontWeight: pw.FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+    await Printing.layoutPdf(onLayout: (_) => doc.save());
+  }
+
+  pw.Widget _pdfCell(String text, {bool bold = false, pw.TextAlign align = pw.TextAlign.left}) => pw.Padding(
+        padding: const pw.EdgeInsets.symmetric(horizontal: 5, vertical: 4),
+        child: pw.Text(text, textAlign: align, style: pw.TextStyle(fontSize: 9, fontWeight: bold ? pw.FontWeight.bold : pw.FontWeight.normal)),
+      );
 }
