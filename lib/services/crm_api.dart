@@ -234,6 +234,12 @@ class CrmApi {
         ..removeWhere((c) => '${c['customer_id']}' == '$id');
       await _db.putCache('customers_pending:$biz', pend);
       await _db.removeCache('customers:$biz');
+      // Let queued sales that reference this offline-created customer (by its
+      // temp id) resolve to the real server id once they sync.
+      if (id is int && id < 0) {
+        final realId = int.tryParse('${r['customer_id']}');
+        if (realId != null && realId > 0) await _db.putIdMap('customer', id, realId);
+      }
       if (r['exists'] == true) return {'success': true, 'message': r['message']};
     }
     return r;

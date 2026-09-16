@@ -146,6 +146,7 @@ class SyncService extends ChangeNotifier {
         for (final it in items) {
           it['product_id'] = await _real('product', it['product_id']);
         }
+        final custId = p['customerId'];
         final res = await api.createSale(
           businessId: biz,
           branchId: p['branchId'] as int,
@@ -155,6 +156,8 @@ class SyncService extends ChangeNotifier {
           amountPaid: (p['amountPaid'] as num?)?.toDouble(),
           clientOpId: opId,
           createdAt: p['createdAt'] as String?,
+          customerPhone: p['customerPhone'] as String? ?? '',
+          customerId: custId is int ? await _real('customer', custId) : null,
         );
         if (res['success'] == true) {
           final data = res['data'];
@@ -382,8 +385,14 @@ class SyncService extends ChangeNotifier {
     if (id >= 0) return id;
     final real = await _db.realId(entity, id);
     if (real == null || real < 0) {
-      throw StateError(
-          'Inategemea ${entity == 'sale' ? 'mauzo' : 'bidhaa'} ambayo bado haijasync');
+      final label = switch (entity) {
+        'sale' => 'mauzo',
+        'product' => 'bidhaa',
+        'customer' => 'mteja',
+        'expense' => 'matumizi',
+        _ => entity,
+      };
+      throw StateError('Inategemea $label ambayo bado haijasync');
     }
     return real;
   }

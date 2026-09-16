@@ -184,6 +184,8 @@ class ApiService {
     double? amountPaid,
     String? clientOpId,
     String? createdAt,
+    String customerPhone = '',
+    int? customerId,
   }) async {
     final res = await _client
         .post(
@@ -193,6 +195,8 @@ class ApiService {
             'business_id': businessId,
             'branch_id': branchId,
             'customer_name': customerName,
+            'customer_phone': customerPhone,
+            'customer_id': ?customerId,
             'customer_type': 'normal',
             'transaction_type': transactionType,
             'items': items,

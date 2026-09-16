@@ -703,6 +703,8 @@ class OfflineApiService extends ApiService {
     double? amountPaid,
     String? clientOpId,
     String? createdAt,
+    String customerPhone = '',
+    int? customerId,
   }) {
     final opId = clientOpId ?? _uuid.v4();
     final when = createdAt ?? _now();
@@ -713,6 +715,7 @@ class OfflineApiService extends ApiService {
           businessId: businessId, branchId: branchId,
           customerName: customerName, transactionType: transactionType,
           items: items, amountPaid: amountPaid, clientOpId: opId, createdAt: whenUtc,
+          customerPhone: customerPhone, customerId: customerId,
         );
         if (res['success'] == true && _deductsStock(transactionType)) {
           // Keep local stock in step so the POS grid is right immediately.
@@ -731,7 +734,9 @@ class OfflineApiService extends ApiService {
             0, (s, i) => s + (double.tryParse('${i['qty']}') ?? 0) *
                 (double.tryParse('${i['unit_price']}') ?? 0));
         final fin = _paymentFigures(transactionType, total, amountPaid);
-        final phone = RegExp(r'PHONE:(\S+)').firstMatch(customerName)?.group(1) ?? '';
+        final phone = customerPhone.isNotEmpty
+            ? customerPhone
+            : RegExp(r'PHONE:(\S+)').firstMatch(customerName)?.group(1) ?? '';
         final name = customerName.split('|').first.trim();
 
         final saleJson = <String, dynamic>{
@@ -783,6 +788,7 @@ class OfflineApiService extends ApiService {
           'tempSaleId': tempId, 'businessId': businessId, 'branchId': branchId,
           'customerName': customerName, 'transactionType': transactionType,
           'items': items, 'amountPaid': amountPaid, 'createdAt': whenUtc,
+          'customerPhone': phone, 'customerId': customerId,
         }, opId: opId);
         return _offlineOk('Mauzo yamehifadhiwa offline — yatatumwa ukiwa online', {
           'sale_id': tempId, 'sale_no': saleNo, 'receipt_no': saleNo,

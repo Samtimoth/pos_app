@@ -1467,7 +1467,7 @@ class _ModeChip extends StatelessWidget {
 class _PickCustomerButton extends StatelessWidget {
   final TextEditingController nameCtrl;
   final TextEditingController phoneCtrl;
-  final VoidCallback onPicked;
+  final ValueChanged<Customer> onPicked;
   const _PickCustomerButton({required this.nameCtrl, required this.phoneCtrl, required this.onPicked});
 
   @override
@@ -1490,7 +1490,7 @@ class _PickCustomerButton extends StatelessWidget {
               if (c == null) return;
               nameCtrl.text = c.name;
               if (c.phone.isNotEmpty) phoneCtrl.text = c.phone;
-              onPicked();
+              onPicked(c);
             },
             child: Icon(Icons.person_search_rounded, color: AppColors.primaryLt, size: 22),
           ),
@@ -1552,6 +1552,12 @@ class _CartPanelState extends State<_CartPanel> {
   String _customerMode = 'walkin';
   String _payType = 'cash';
   bool _processing = false;
+
+  // Set when "Chagua mteja" is used; only trusted at checkout if the phone
+  // field still matches what was picked (guards against a stale id if the
+  // cashier picks someone then types a different number for someone else).
+  int? _pickedCustomerId;
+  String? _pickedCustomerPhone;
 
   @override
   void dispose() {
@@ -1624,6 +1630,9 @@ class _CartPanelState extends State<_CartPanel> {
 
     setState(() => _processing = true);
     try {
+      final phone = _phoneCtrl.text.trim();
+      final confirmedCustomerId =
+          (_pickedCustomerId != null && _pickedCustomerPhone == phone) ? _pickedCustomerId : null;
       final res = await app.api!.createSale(
         businessId: app.selectedBusiness!.businessId,
         branchId: app.selectedBranch?.branchId ?? 0,
@@ -1631,6 +1640,8 @@ class _CartPanelState extends State<_CartPanel> {
         transactionType: _payType,
         items: cart.toApiItems(),
         amountPaid: _amountPaid(),
+        customerPhone: phone,
+        customerId: confirmedCustomerId,
       );
       if (!mounted) return;
       if (res['success'] == true) {
@@ -1677,6 +1688,8 @@ class _CartPanelState extends State<_CartPanel> {
         setState(() {
           _customerMode = 'walkin';
           _payType = 'cash';
+          _pickedCustomerId = null;
+          _pickedCustomerPhone = null;
         });
         _snack(
           res['offline'] == true
@@ -1900,8 +1913,10 @@ class _CartPanelState extends State<_CartPanel> {
                         _PickCustomerButton(
                           nameCtrl: _customerCtrl,
                           phoneCtrl: _phoneCtrl,
-                          onPicked: () => setState(() {
+                          onPicked: (c) => setState(() {
                             if (_customerMode == 'walkin') _customerMode = 'registered';
+                            _pickedCustomerId = c.customerId != 0 ? c.customerId : null;
+                            _pickedCustomerPhone = c.phone;
                           }),
                         ),
                       ],
@@ -2056,6 +2071,9 @@ class _CartSheetState extends State<_CartSheet> {
   String _payType = 'cash';
   bool _processing = false;
 
+  int? _pickedCustomerId;
+  String? _pickedCustomerPhone;
+
   @override
   void dispose() {
     _customerCtrl.dispose();
@@ -2125,6 +2143,9 @@ class _CartSheetState extends State<_CartSheet> {
     if (app.api == null || app.selectedBusiness == null) return;
     setState(() => _processing = true);
     try {
+      final phone = _phoneCtrl.text.trim();
+      final confirmedCustomerId =
+          (_pickedCustomerId != null && _pickedCustomerPhone == phone) ? _pickedCustomerId : null;
       final res = await app.api!.createSale(
         businessId: app.selectedBusiness!.businessId,
         branchId: app.selectedBranch?.branchId ?? 0,
@@ -2132,6 +2153,8 @@ class _CartSheetState extends State<_CartSheet> {
         transactionType: _payType,
         items: cart.toApiItems(),
         amountPaid: _amountPaid(),
+        customerPhone: phone,
+        customerId: confirmedCustomerId,
       );
       if (!mounted) return;
       if (res['success'] == true) {
@@ -2374,8 +2397,10 @@ class _CartSheetState extends State<_CartSheet> {
                         _PickCustomerButton(
                           nameCtrl: _customerCtrl,
                           phoneCtrl: _phoneCtrl,
-                          onPicked: () => setState(() {
+                          onPicked: (c) => setState(() {
                             if (_customerMode == 'walkin') _customerMode = 'registered';
+                            _pickedCustomerId = c.customerId != 0 ? c.customerId : null;
+                            _pickedCustomerPhone = c.phone;
                           }),
                         ),
                         if (_needsCustomerDetails) ...[
