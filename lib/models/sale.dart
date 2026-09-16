@@ -31,6 +31,30 @@ class CartItem {
   /// Label shown in cart, e.g. "Pepsi × 2 Dozen" or "Pepsi × 3"
   String get displayLabel =>
       unitName.isNotEmpty ? '$productName ($unitName)' : productName;
+
+  Map<String, dynamic> toJson() => {
+        'cartKey': cartKey,
+        'productId': productId,
+        'productName': productName,
+        'qty': qty,
+        'unitPrice': unitPrice,
+        'maxStock': maxStock,
+        'unitId': unitId,
+        'unitName': unitName,
+        'conversionQty': conversionQty,
+      };
+
+  factory CartItem.fromJson(Map<String, dynamic> json) => CartItem(
+        cartKey: '${json['cartKey']}',
+        productId: int.tryParse('${json['productId']}') ?? 0,
+        productName: '${json['productName'] ?? ''}',
+        qty: int.tryParse('${json['qty']}') ?? 1,
+        unitPrice: double.tryParse('${json['unitPrice']}') ?? 0,
+        maxStock: int.tryParse('${json['maxStock']}') ?? 0,
+        unitId: int.tryParse('${json['unitId']}') ?? 0,
+        unitName: '${json['unitName'] ?? ''}',
+        conversionQty: double.tryParse('${json['conversionQty']}') ?? 1.0,
+      );
 }
 
 class Sale {

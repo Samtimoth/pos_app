@@ -10,13 +10,16 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import '../models/customer.dart';
 import '../models/product.dart';
+import '../models/sale.dart';
 import '../providers/app_provider.dart';
 import '../providers/cart_provider.dart';
 import '../theme/app_theme.dart';
 import '../l10n/app_l10n.dart';
 import '../utils/cat_style.dart';
+import '../providers/held_sales_provider.dart';
 import '../widgets/discount_field.dart';
 import '../widgets/first_run_tutorial.dart';
+import '../widgets/held_sales_sheet.dart';
 import '../widgets/manager_pin_dialog.dart';
 import '../widgets/split_payment_field.dart';
 import 'customers_screen.dart';
@@ -1310,6 +1313,39 @@ class _QtyStepper extends StatelessWidget {
   );
 }
 
+class _HeldSalesButton extends StatelessWidget {
+  final VoidCallback onTap;
+  final bool compact;
+  const _HeldSalesButton({required this.onTap, this.compact = false});
+
+  @override
+  Widget build(BuildContext context) {
+    final count = context.watch<HeldSalesProvider>().count;
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        IconButton(
+          tooltip: 'Mauzo yaliyowekwa kando',
+          onPressed: onTap,
+          icon: Icon(Icons.pause_circle_filled_rounded, color: AppColors.chartPurple, size: compact ? 18 : 22),
+          padding: compact ? EdgeInsets.zero : null,
+          constraints: compact ? const BoxConstraints(minWidth: 32, minHeight: 32) : null,
+          visualDensity: compact ? VisualDensity.compact : null,
+        ),
+        if (count > 0)
+          Positioned(
+            right: 2, top: 2,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+              decoration: BoxDecoration(color: Colors.redAccent, borderRadius: BorderRadius.circular(8)),
+              child: Text('$count', style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
 class _TotalCard extends StatelessWidget {
   final NumberFormat fmt;
   final double total;
@@ -1595,6 +1631,114 @@ class _CartPanelState extends State<_CartPanel> {
     super.dispose();
   }
 
+  // ── Weka kando / Rudisha mauzo (hold/resume) ──────────────────────────────
+  Future<void> _holdCart() async {
+    final app = context.read<AppProvider>();
+    final cart = context.read<CartProvider>();
+    final bizId = app.selectedBusiness?.businessId;
+    if (bizId == null || cart.items.isEmpty) return;
+    final label = await _promptHoldLabel();
+    if (!mounted || label == null) return; // cashier cancelled
+    await context.read<HeldSalesProvider>().load(bizId);
+    if (!mounted) return;
+    await context.read<HeldSalesProvider>().hold(
+          label: label.isNotEmpty ? label : (_customerCtrl.text.trim().isNotEmpty ? _customerCtrl.text.trim() : "Mteja"),
+          items: List<CartItem>.from(cart.items),
+          customerName: _customerCtrl.text.trim(),
+          customerPhone: _phoneCtrl.text.trim(),
+          customerMode: _customerMode,
+          payType: _payType,
+        );
+    cart.clear();
+    _customerCtrl.clear();
+    _phoneCtrl.clear();
+    _locationCtrl.clear();
+    _noteCtrl.clear();
+    _paidCtrl.clear();
+    setState(() {
+      _customerMode = "walkin";
+      _payType = "cash";
+      _pickedCustomerId = null;
+      _pickedCustomerPhone = null;
+      _splitPay = SplitPaymentResult.off;
+      _discount = 0;
+    });
+    if (mounted) _snack("Mauzo yamewekwa kando", AppColors.chartPurple);
+  }
+
+  Future<String?> _promptHoldLabel() async {
+    final ctrl = TextEditingController(text: _customerCtrl.text.trim());
+    final res = await showDialog<String>(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: AppColors.bgCard,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Text("Weka Kikapu Kando", style: TextStyle(color: AppColors.textWhite, fontSize: 16)),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          style: TextStyle(color: AppColors.textWhite),
+          decoration: InputDecoration(
+            hintText: "Jina la mteja (optional)",
+            hintStyle: TextStyle(color: AppColors.textMuted),
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: Text("Ghairi", style: TextStyle(color: AppColors.textMuted))),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, ctrl.text.trim()),
+            style: ElevatedButton.styleFrom(backgroundColor: AppColors.chartPurple, foregroundColor: Colors.white),
+            child: const Text("Weka Kando"),
+          ),
+        ],
+      ),
+    );
+    return res;
+  }
+
+  Future<void> _openHeldSales() async {
+    final app = context.read<AppProvider>();
+    final bizId = app.selectedBusiness?.businessId;
+    if (bizId == null) return;
+    await context.read<HeldSalesProvider>().load(bizId);
+    if (!mounted) return;
+    final picked = await HeldSalesSheet.show(context);
+    if (picked == null || !mounted) return;
+    await _resumeHeld(picked);
+  }
+
+  Future<void> _resumeHeld(HeldSale h) async {
+    final cart = context.read<CartProvider>();
+    if (cart.items.isNotEmpty) {
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (_) => AlertDialog(
+          backgroundColor: AppColors.bgCard,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: Text("Kikapu cha sasa kina bidhaa", style: TextStyle(color: AppColors.textWhite, fontSize: 16)),
+          content: Text("Kitafutwa kikirudisha hiki kilichowekwa kando. Endelea?",
+              style: TextStyle(color: AppColors.textMuted, fontSize: 13)),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context, false), child: Text("Ghairi", style: TextStyle(color: AppColors.textMuted))),
+            ElevatedButton(onPressed: () => Navigator.pop(context, true), child: const Text("Endelea")),
+          ],
+        ),
+      );
+      if (ok != true) return;
+      if (!mounted) return;
+    }
+    final taken = await context.read<HeldSalesProvider>().take(h.id);
+    if (taken == null || !mounted) return;
+    cart.restoreItems(taken.items);
+    _customerCtrl.text = taken.customerName;
+    _phoneCtrl.text = taken.customerPhone;
+    setState(() {
+      _customerMode = taken.customerMode;
+      _payType = taken.payType;
+    });
+    if (mounted) _snack("Mauzo yamerudishwa", AppColors.accent);
+  }
+
   bool get _needsCustomerDetails =>
       _customerMode != 'walkin' ||
       _payType == 'loan' ||
@@ -1814,6 +1958,8 @@ class _CartPanelState extends State<_CartPanel> {
                     children: [
                       Text(
                         l.cart,
+                        overflow: TextOverflow.ellipsis,
+                        maxLines: 1,
                         style: TextStyle(
                           color: AppColors.textWhite,
                           fontWeight: FontWeight.bold,
@@ -1822,6 +1968,8 @@ class _CartPanelState extends State<_CartPanel> {
                       ),
                       Text(
                         '${cart.count} ${l.items} • TZS ${widget.fmt.format(cart.total)}',
+                        overflow: TextOverflow.ellipsis,
+                        maxLines: 1,
                         style: TextStyle(
                           color: AppColors.textMuted,
                           fontSize: 11,
@@ -1830,6 +1978,16 @@ class _CartPanelState extends State<_CartPanel> {
                     ],
                   ),
                 ),
+                _HeldSalesButton(onTap: _openHeldSales, compact: true),
+                if (cart.count > 0)
+                  IconButton(
+                    tooltip: 'Weka kando',
+                    onPressed: _holdCart,
+                    icon: Icon(Icons.pause_circle_outline_rounded, color: AppColors.chartPurple, size: 18),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                    visualDensity: VisualDensity.compact,
+                  ),
                 if (cart.count > 0)
                   IconButton(
                     tooltip: l.clearCart,
@@ -1837,7 +1995,11 @@ class _CartPanelState extends State<_CartPanel> {
                     icon: const Icon(
                       Icons.delete_outline_rounded,
                       color: Colors.redAccent,
+                      size: 18,
                     ),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                    visualDensity: VisualDensity.compact,
                   ),
               ],
             ),
@@ -2151,6 +2313,114 @@ class _CartSheetState extends State<_CartSheet> {
     super.dispose();
   }
 
+  // ── Weka kando / Rudisha mauzo (hold/resume) ──────────────────────────────
+  Future<void> _holdCart() async {
+    final app = context.read<AppProvider>();
+    final cart = context.read<CartProvider>();
+    final bizId = app.selectedBusiness?.businessId;
+    if (bizId == null || cart.items.isEmpty) return;
+    final label = await _promptHoldLabel();
+    if (!mounted || label == null) return; // cashier cancelled
+    await context.read<HeldSalesProvider>().load(bizId);
+    if (!mounted) return;
+    await context.read<HeldSalesProvider>().hold(
+          label: label.isNotEmpty ? label : (_customerCtrl.text.trim().isNotEmpty ? _customerCtrl.text.trim() : "Mteja"),
+          items: List<CartItem>.from(cart.items),
+          customerName: _customerCtrl.text.trim(),
+          customerPhone: _phoneCtrl.text.trim(),
+          customerMode: _customerMode,
+          payType: _payType,
+        );
+    cart.clear();
+    _customerCtrl.clear();
+    _phoneCtrl.clear();
+    _locationCtrl.clear();
+    _noteCtrl.clear();
+    _paidCtrl.clear();
+    setState(() {
+      _customerMode = "walkin";
+      _payType = "cash";
+      _pickedCustomerId = null;
+      _pickedCustomerPhone = null;
+      _splitPay = SplitPaymentResult.off;
+      _discount = 0;
+    });
+    if (mounted) _snack("Mauzo yamewekwa kando", AppColors.chartPurple);
+  }
+
+  Future<String?> _promptHoldLabel() async {
+    final ctrl = TextEditingController(text: _customerCtrl.text.trim());
+    final res = await showDialog<String>(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: AppColors.bgCard,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Text("Weka Kikapu Kando", style: TextStyle(color: AppColors.textWhite, fontSize: 16)),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          style: TextStyle(color: AppColors.textWhite),
+          decoration: InputDecoration(
+            hintText: "Jina la mteja (optional)",
+            hintStyle: TextStyle(color: AppColors.textMuted),
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: Text("Ghairi", style: TextStyle(color: AppColors.textMuted))),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, ctrl.text.trim()),
+            style: ElevatedButton.styleFrom(backgroundColor: AppColors.chartPurple, foregroundColor: Colors.white),
+            child: const Text("Weka Kando"),
+          ),
+        ],
+      ),
+    );
+    return res;
+  }
+
+  Future<void> _openHeldSales() async {
+    final app = context.read<AppProvider>();
+    final bizId = app.selectedBusiness?.businessId;
+    if (bizId == null) return;
+    await context.read<HeldSalesProvider>().load(bizId);
+    if (!mounted) return;
+    final picked = await HeldSalesSheet.show(context);
+    if (picked == null || !mounted) return;
+    await _resumeHeld(picked);
+  }
+
+  Future<void> _resumeHeld(HeldSale h) async {
+    final cart = context.read<CartProvider>();
+    if (cart.items.isNotEmpty) {
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (_) => AlertDialog(
+          backgroundColor: AppColors.bgCard,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: Text("Kikapu cha sasa kina bidhaa", style: TextStyle(color: AppColors.textWhite, fontSize: 16)),
+          content: Text("Kitafutwa kikirudisha hiki kilichowekwa kando. Endelea?",
+              style: TextStyle(color: AppColors.textMuted, fontSize: 13)),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context, false), child: Text("Ghairi", style: TextStyle(color: AppColors.textMuted))),
+            ElevatedButton(onPressed: () => Navigator.pop(context, true), child: const Text("Endelea")),
+          ],
+        ),
+      );
+      if (ok != true) return;
+      if (!mounted) return;
+    }
+    final taken = await context.read<HeldSalesProvider>().take(h.id);
+    if (taken == null || !mounted) return;
+    cart.restoreItems(taken.items);
+    _customerCtrl.text = taken.customerName;
+    _phoneCtrl.text = taken.customerPhone;
+    setState(() {
+      _customerMode = taken.customerMode;
+      _payType = taken.payType;
+    });
+    if (mounted) _snack("Mauzo yamerudishwa", AppColors.accent);
+  }
+
   bool get _needsCustomerDetails =>
       _customerMode != 'walkin' ||
       _payType == 'loan' ||
@@ -2372,6 +2642,16 @@ class _CartSheetState extends State<_CartSheet> {
                     '${cart.count} ${l.items}',
                     style: TextStyle(color: AppColors.textMuted, fontSize: 12),
                   ),
+                  _HeldSalesButton(onTap: _openHeldSales, compact: true),
+                  if (cart.count > 0)
+                    IconButton(
+                      tooltip: 'Weka kando',
+                      onPressed: _holdCart,
+                      icon: Icon(Icons.pause_circle_outline_rounded, color: AppColors.chartPurple, size: 18),
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                      visualDensity: VisualDensity.compact,
+                    ),
                   IconButton(
                     onPressed: () => Navigator.pop(context),
                     icon: Icon(Icons.close_rounded, color: AppColors.textMuted),

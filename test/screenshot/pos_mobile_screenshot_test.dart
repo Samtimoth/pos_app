@@ -16,6 +16,7 @@ import 'package:donel_pos/models/business.dart';
 import 'package:donel_pos/models/user.dart';
 import 'package:donel_pos/providers/app_provider.dart';
 import 'package:donel_pos/providers/cart_provider.dart';
+import 'package:donel_pos/providers/held_sales_provider.dart';
 import 'package:donel_pos/providers/theme_provider.dart';
 import 'package:donel_pos/screens/dashboard_screen.dart';
 import 'package:donel_pos/screens/pos_screen.dart';
@@ -167,6 +168,7 @@ Widget _wrap(AppProvider app, CartProvider cart, GlobalKey key, Widget child) =>
     ChangeNotifierProvider.value(value: ThemeProvider()),
     ChangeNotifierProvider.value(value: app),
     ChangeNotifierProvider.value(value: cart),
+    ChangeNotifierProvider(create: (_) => HeldSalesProvider()),
     ChangeNotifierProvider.value(value: ConnectivityService.instance),
     ChangeNotifierProvider.value(value: SyncService.instance),
   ],
@@ -263,6 +265,7 @@ void main() {
           ChangeNotifierProvider.value(value: ThemeProvider()),
           ChangeNotifierProvider.value(value: app),
           ChangeNotifierProvider.value(value: cart),
+          ChangeNotifierProvider(create: (_) => HeldSalesProvider()),
           ChangeNotifierProvider.value(value: ConnectivityService.instance),
           ChangeNotifierProvider.value(value: SyncService.instance),
         ],
