@@ -24,7 +24,7 @@ enum _Range { today, week, month, lastMonth, quarter, year, custom }
 
 class _ReportsScreenState extends State<ReportsScreen>
     with SingleTickerProviderStateMixin {
-  late final TabController _tab = TabController(length: 3, vsync: this);
+  late final TabController _tab = TabController(length: 4, vsync: this);
   final _fmt = NumberFormat('#,###', 'en_US');
   final _fmtD = NumberFormat('#,##0.#', 'en_US');
 
@@ -33,6 +33,7 @@ class _ReportsScreenState extends State<ReportsScreen>
   DateTime _to = DateTime.now();
 
   Map<String, dynamic>? _report;
+  Map<String, dynamic>? _cashflow;
   bool _loading = true;
   bool _offline = false;
   bool _exporting = false;
@@ -90,16 +91,27 @@ class _ReportsScreenState extends State<ReportsScreen>
       _error = null;
     });
     try {
-      final r = await app.api!.getReport(
-        biz.businessId,
-        branchId: app.selectedBranch?.branchId,
-        dateFrom: _fromStr,
-        dateTo: _toStr,
-      );
+      final results = await Future.wait([
+        app.api!.getReport(
+          biz.businessId,
+          branchId: app.selectedBranch?.branchId,
+          dateFrom: _fromStr,
+          dateTo: _toStr,
+        ),
+        app.api!.getCashFlow(
+          biz.businessId,
+          branchId: app.selectedBranch?.branchId,
+          dateFrom: _fromStr,
+          dateTo: _toStr,
+        ),
+      ]);
       if (!mounted) return;
+      final r = results[0];
+      final cf = results[1];
       if (r['success'] == true) {
         setState(() {
           _report = r;
+          _cashflow = cf['success'] == true ? cf : null;
           _offline = r['offline'] == true;
         });
       } else {
@@ -228,7 +240,7 @@ class _ReportsScreenState extends State<ReportsScreen>
                     ? _errorView()
                     : TabBarView(
                         controller: _tab,
-                        children: [_pnlTab(), _salesTab(), _expensesTab()],
+                        children: [_pnlTab(), _salesTab(), _expensesTab(), _cashflowTab()],
                       ),
           ),
         ],
@@ -416,10 +428,12 @@ class _ReportsScreenState extends State<ReportsScreen>
                     labelColor: AppColors.primary,
                     unselectedLabelColor: Colors.white70,
                     labelStyle: const TextStyle(fontWeight: FontWeight.w800, fontSize: 12.5),
+                    isScrollable: true,
                     tabs: const [
                       Tab(height: 40, text: 'Faida (P&L)'),
                       Tab(height: 40, text: 'Mauzo'),
                       Tab(height: 40, text: 'Matumizi'),
+                      Tab(height: 40, text: 'Mtiririko wa Pesa'),
                     ],
                   ),
                 ),
@@ -969,6 +983,106 @@ class _ReportsScreenState extends State<ReportsScreen>
         res['success'] == true ? AppColors.accent : AppColors.chartRed,
         icon: Icons.delete_rounded);
     _load();
+  }
+
+  // ── Cash flow tab ────────────────────────────────────────────────────────
+  static const _cfMethodLabels = {
+    'cash': 'Taslimu', 'mpesa': 'M-Pesa', 'mobile': 'Simu', 'bank': 'Benki',
+    'card': 'Kadi', 'credit': 'Mkopo', 'other': 'Nyingine',
+  };
+  String _cfMethodLabel(String m) => _cfMethodLabels[m.toLowerCase()] ?? m;
+
+  Widget _cashflowTab() {
+    final cf = _cashflow;
+    final maxPad = MediaQuery.paddingOf(context).bottom;
+    if (cf == null) {
+      return RefreshIndicator(
+        onRefresh: _load,
+        color: AppColors.primary,
+        child: ListView(children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 60),
+            child: Column(children: [
+              Icon(Icons.account_balance_wallet_outlined, size: 48, color: AppColors.textMuted),
+              const SizedBox(height: 10),
+              Text('Mtiririko wa pesa haupatikani kwa sasa',
+                  style: TextStyle(color: AppColors.textMuted)),
+            ]),
+          ),
+        ]),
+      );
+    }
+    final inD = _m(cf['in']);
+    final outD = _m(cf['out']);
+    final netD = _m(cf['net']);
+    final inByMethod = _l(inD['by_method']);
+    final outByMethod = _l(outD['by_method']);
+    final netByMethod = _l(netD['by_method']);
+    final inTotal = _n(inD['total']);
+    final outTotal = _n(outD['total']);
+    final netTotal = _n(netD['total']);
+
+    final left = <Widget>[
+          Row(children: [
+            _kpi('Pesa Ndani', _money(inTotal), '${inByMethod.length} aina', AppColors.accent),
+            const SizedBox(width: 10),
+            _kpi('Pesa Nje', _money(outTotal), 'manunuzi + matumizi', AppColors.chartOrange),
+          ]),
+          const SizedBox(height: 10),
+          Row(children: [
+            _kpi('Mtiririko Halisi', '${netTotal >= 0 ? '' : '-'}${_money(netTotal.abs())}',
+                netTotal >= 0 ? 'chanya' : 'hasi',
+                netTotal >= 0 ? AppColors.accent : AppColors.chartRed),
+          ]),
+          const SizedBox(height: 14),
+          if (inByMethod.isNotEmpty)
+            _card(
+              title: 'Pesa Ndani — kwa aina ya malipo',
+              child: Column(children: [
+                for (final r in inByMethod)
+                  _bar('${_cfMethodLabel('${r['method']}')} (${r['count']})', _n(r['amount']), inTotal, AppColors.accent),
+              ]),
+            ),
+          if (outByMethod.isNotEmpty) ...[
+            const SizedBox(height: 14),
+            _card(
+              title: 'Pesa Nje — kwa aina ya malipo',
+              child: Column(children: [
+                for (final r in outByMethod)
+                  _bar(_cfMethodLabel('${r['method']}'), _n(r['amount']), outTotal, AppColors.chartOrange),
+              ]),
+            ),
+          ],
+    ];
+    final right = <Widget>[
+          if (netByMethod.isEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 40),
+              child: Column(children: [
+                Icon(Icons.account_balance_wallet_outlined, size: 48, color: AppColors.textMuted),
+                const SizedBox(height: 10),
+                Text('Hakuna miamala kwenye kipindi hiki',
+                    style: TextStyle(color: AppColors.textMuted)),
+              ]),
+            )
+          else
+            _card(
+              title: 'Mtiririko halisi — kwa aina',
+              subtitle: 'Ndani ukiondoa Nje, kila aina ya malipo',
+              child: Column(children: [
+                for (final r in netByMethod)
+                  _line(_cfMethodLabel('${r['method']}'), r['net'],
+                      strong: true,
+                      negative: _n(r['net']) < 0,
+                      color: _n(r['net']) >= 0 ? AppColors.accent : AppColors.chartRed),
+              ]),
+            ),
+    ];
+    return RefreshIndicator(
+      onRefresh: _load,
+      color: AppColors.primary,
+      child: _columns(left, right, bottomPad: 100 + maxPad),
+    );
   }
 
   // ── small widgets ─────────────────────────────────────────────────────────

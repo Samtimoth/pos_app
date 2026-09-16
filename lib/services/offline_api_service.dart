@@ -1051,6 +1051,17 @@ class OfflineApiService extends ApiService {
     );
   }
 
+  @override
+  Future<Map<String, dynamic>> getCashFlow(int businessId,
+      {int? branchId, required String dateFrom, required String dateTo}) {
+    final key = 'cashflow:$businessId:${branchId ?? 0}:$dateFrom:$dateTo';
+    return _cached(
+      key,
+      () => super.getCashFlow(businessId, branchId: branchId, dateFrom: dateFrom, dateTo: dateTo),
+      decode: (raw) => {...Map<String, dynamic>.from(raw as Map), 'offline': true},
+    );
+  }
+
   /// Expense rows live in kv cache under one key per business; offline
   /// adds/edits are applied to that list and queued.
   String _expKey(int biz) => 'expenses:$biz';
