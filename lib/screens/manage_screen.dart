@@ -8,6 +8,7 @@ import '../widgets/first_run_tutorial.dart';
 import '../l10n/app_l10n.dart';
 import 'purchase_orders_screen.dart';
 import 'purchases_screen.dart';
+import 'quotations_screen.dart';
 import 'stock_transfers_screen.dart';
 import 'suppliers_screen.dart';
 
@@ -38,7 +39,7 @@ class _ManageScreenState extends State<ManageScreen>
     final multiBranch = (app.selectedBusiness?.branches.length ?? 0) > 1;
     _visible = [
       if (user == null || user.canManageProducts) ...[
-        'categories', 'units', 'suppliers', 'purchase_orders', 'purchases',
+        'categories', 'units', 'suppliers', 'purchase_orders', 'purchases', 'quotations',
         if (multiBranch) 'stock_transfers',
       ],
       if (user == null || user.canManageStaff) 'staff',
@@ -139,6 +140,11 @@ class _ManageScreenState extends State<ManageScreen>
                 icon: const Icon(Icons.move_to_inbox_outlined, size: 16),
                 text: l.isSw ? 'Manunuzi' : 'Purchases',
               )
+            else if (t == 'quotations')
+              Tab(
+                icon: const Icon(Icons.description_outlined, size: 16),
+                text: l.isSw ? 'Nukuu' : 'Quotes',
+              )
             else if (t == 'stock_transfers')
               Tab(
                 icon: const Icon(Icons.sync_alt_rounded, size: 16),
@@ -185,6 +191,8 @@ class _ManageScreenState extends State<ManageScreen>
                     const PurchaseOrdersScreen(desktop: true)
                   else if (t == 'purchases')
                     const PurchasesScreen(desktop: true)
+                  else if (t == 'quotations')
+                    const QuotationsScreen(desktop: true)
                   else if (t == 'stock_transfers')
                     const StockTransfersScreen(desktop: true)
                   else
@@ -275,6 +283,8 @@ class _ManageScreenState extends State<ManageScreen>
                       const PurchaseOrdersScreen(desktop: false)
                     else if (t == 'purchases')
                       const PurchasesScreen(desktop: false)
+                    else if (t == 'quotations')
+                      const QuotationsScreen(desktop: false)
                     else if (t == 'stock_transfers')
                       const StockTransfersScreen(desktop: false)
                     else

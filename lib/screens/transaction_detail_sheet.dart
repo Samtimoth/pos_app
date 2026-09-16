@@ -234,6 +234,75 @@ class _TransactionDetailSheetState extends State<TransactionDetailSheet>
     await Printing.layoutPdf(onLayout: (_) => doc.save());
   }
 
+  /// Hati ya Usafirishaji (Delivery Note, Hatua 6) — inathibitisha ni bidhaa
+  /// gani (idadi) zimesafirishwa/kupokelewa kwa mauzo haya. Bei hazionyeshwi
+  /// kwa makusudi (desturi ya kawaida ya delivery note — ni uthibitisho wa
+  /// kiasi, si hati ya malipo, tofauti na risiti).
+  Future<void> _printDeliveryNote() async {
+    final app = context.read<AppProvider>();
+    final biz = app.selectedBusiness;
+    final businessName = (biz?.receiptHeader.isNotEmpty ?? false)
+        ? biz!.receiptHeader
+        : (biz?.businessName ?? 'Duka Kiganjani');
+    final noteNo = 'DN-${_sale.saleNo.isNotEmpty ? _sale.saleNo : _sale.saleId}';
+
+    final doc = pw.Document();
+    doc.addPage(
+      pw.MultiPage(
+        pageFormat: PdfPageFormat.a4,
+        build: (ctx) => [
+          pw.Center(child: pw.Text(businessName.toUpperCase(), style: pw.TextStyle(fontSize: 16, fontWeight: pw.FontWeight.bold))),
+          pw.Center(child: pw.Text('HATI YA USAFIRISHAJI / DELIVERY NOTE', style: const pw.TextStyle(fontSize: 10))),
+          pw.SizedBox(height: 10),
+          _pdfRow('Namba', noteNo),
+          _pdfRow('Rejea ya Mauzo', _sale.saleNo.isNotEmpty ? _sale.saleNo : '#${_sale.saleId}'),
+          _pdfRow('Tarehe', _dateFmt.format(DateTime.tryParse(_sale.createdAt) ?? DateTime.now())),
+          _pdfRow('Mteja', _sale.customerName.isNotEmpty ? _sale.customerName : 'Mteja wa kawaida'),
+          if (_sale.customerPhone.isNotEmpty) _pdfRow('Simu', _sale.customerPhone),
+          pw.SizedBox(height: 12),
+          pw.Table(
+            border: pw.TableBorder.all(color: PdfColors.grey400, width: 0.5),
+            columnWidths: const {0: pw.FlexColumnWidth(3.5), 1: pw.FlexColumnWidth(1.5)},
+            children: [
+              pw.TableRow(decoration: const pw.BoxDecoration(color: PdfColors.grey200), children: [
+                _pdfCell('Bidhaa', bold: true), _pdfCell('Idadi', bold: true, align: pw.TextAlign.right),
+              ]),
+              for (final i in _items)
+                pw.TableRow(children: [
+                  _pdfCell('${i['product_name'] ?? '—'}'),
+                  _pdfCell(_qtyStr((i['quantity'] as num? ?? 0).toDouble()), align: pw.TextAlign.right),
+                ]),
+            ],
+          ),
+          pw.SizedBox(height: 40),
+          pw.Row(mainAxisAlignment: pw.MainAxisAlignment.spaceBetween, children: [
+            _signatureBlock('Amesafirishwa na'),
+            _signatureBlock('Amepokea'),
+          ]),
+        ],
+      ),
+    );
+    await Printing.layoutPdf(onLayout: (_) => doc.save());
+  }
+
+  String _qtyStr(double q) => q == q.roundToDouble() ? q.toInt().toString() : q.toStringAsFixed(1);
+
+  pw.Widget _pdfCell(String text, {bool bold = false, pw.TextAlign align = pw.TextAlign.left}) => pw.Padding(
+        padding: const pw.EdgeInsets.symmetric(horizontal: 5, vertical: 4),
+        child: pw.Text(text, textAlign: align, style: pw.TextStyle(fontSize: 9, fontWeight: bold ? pw.FontWeight.bold : pw.FontWeight.normal)),
+      );
+
+  pw.Widget _signatureBlock(String label) => pw.SizedBox(
+        width: 200,
+        child: pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.start, children: [
+          pw.Container(height: 1, color: PdfColors.grey600),
+          pw.SizedBox(height: 4),
+          pw.Text(label, style: const pw.TextStyle(fontSize: 9)),
+          pw.Text('Jina: ______________________', style: const pw.TextStyle(fontSize: 8)),
+          pw.Text('Tarehe: ____________________', style: const pw.TextStyle(fontSize: 8)),
+        ]),
+      );
+
   pw.Widget _pdfRow(String k, String v) => pw.Padding(
     padding: const pw.EdgeInsets.symmetric(vertical: 1),
     child: pw.Row(
@@ -802,12 +871,18 @@ class _TransactionDetailSheetState extends State<TransactionDetailSheet>
               ],
             ),
           ),
-          if (!_sale.isVoided && !_loadingItems)
+          if (!_sale.isVoided && !_loadingItems) ...[
             IconButton(
               onPressed: _printReceipt,
               tooltip: l.isSw ? 'Chapisha Risiti' : 'Print Receipt',
               icon: Icon(Icons.print_rounded, color: AppColors.primaryLt),
             ),
+            IconButton(
+              onPressed: _printDeliveryNote,
+              tooltip: l.isSw ? 'Chapisha Hati ya Usafirishaji' : 'Print Delivery Note',
+              icon: Icon(Icons.local_shipping_rounded, color: AppColors.primaryLt),
+            ),
+          ],
           IconButton(
             onPressed: () => Navigator.pop(context),
             icon: Icon(Icons.close_rounded, color: AppColors.textMuted),

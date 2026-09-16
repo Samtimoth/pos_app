@@ -289,6 +289,47 @@ class CrmApi {
       });
 
   // ═══════════════════════════════════════════════════════════════════════
+  // Nukuu ya Bei (Quotation, Hatua 6) — hati ya bei kwa mteja KABLA ya
+  // mauzo halisi; haigusi stock wala fedha kabisa.
+  // ═══════════════════════════════════════════════════════════════════════
+  Future<List<Map<String, dynamic>>> listQuotations(int businessId, {int? customerId, String status = ''}) async {
+    final r = await _get('quotations.php', {
+      'action': 'list', 'business_id': '$businessId',
+      if (customerId != null) 'customer_id': '$customerId',
+      if (status.isNotEmpty) 'status': status,
+    });
+    return ((r['quotations'] as List?) ?? []).map((e) => Map<String, dynamic>.from(e as Map)).toList();
+  }
+
+  Future<Map<String, dynamic>> getQuotation(int businessId, int quotationId) =>
+      _get('quotations.php', {'action': 'get', 'business_id': '$businessId', 'quotation_id': '$quotationId'});
+
+  Future<Map<String, dynamic>> createQuotation({
+    required int businessId,
+    int? branchId,
+    int? customerId,
+    String customerName = '',
+    String customerPhone = '',
+    required List<Map<String, dynamic>> items,
+    String? validUntil,
+    String notes = '',
+  }) {
+    final opId = _uuid.v4();
+    return _post('quotations.php', {
+      'action': 'create', 'business_id': businessId,
+      'branch_id': ?branchId, 'customer_id': ?customerId,
+      'customer_name': customerName, 'customer_phone': customerPhone,
+      'items': items, 'valid_until': ?validUntil, 'notes': notes, 'client_op_id': opId,
+    });
+  }
+
+  Future<Map<String, dynamic>> acceptQuotation(int businessId, int quotationId) =>
+      _post('quotations.php', {'action': 'accept', 'business_id': businessId, 'quotation_id': quotationId});
+
+  Future<Map<String, dynamic>> cancelQuotation(int businessId, int quotationId) =>
+      _post('quotations.php', {'action': 'cancel', 'business_id': businessId, 'quotation_id': quotationId});
+
+  // ═══════════════════════════════════════════════════════════════════════
   // Uhamisho wa stock kati ya matawi (Hatua 5) — kila tawi lina bidhaa/stock
   // yake tofauti sasa (angalia get_products.php/add_product.php branch_id
   // scoping); hii inahamisha kiasi kutoka tawi moja kwenda lingine.
