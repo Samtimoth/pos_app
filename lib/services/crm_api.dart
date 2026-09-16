@@ -199,6 +199,49 @@ class CrmApi {
   }
 
   // ═══════════════════════════════════════════════════════════════════════
+  // Purchases (Hatua 5) — recording stock bought from a supplier, with a
+  // simple accounts-payable balance. Online-only (money + stock write,
+  // same trust level as sale_returns/discounts — no offline queue).
+  // ═══════════════════════════════════════════════════════════════════════
+  Future<List<Map<String, dynamic>>> listPurchases(int businessId, {int? supplierId, String status = ''}) async {
+    final r = await _get('purchases.php', {
+      'action': 'list', 'business_id': '$businessId',
+      if (supplierId != null) 'supplier_id': '$supplierId',
+      if (status.isNotEmpty) 'status': status,
+    });
+    return ((r['purchases'] as List?) ?? []).map((e) => Map<String, dynamic>.from(e as Map)).toList();
+  }
+
+  Future<Map<String, dynamic>> getPurchase(int businessId, int purchaseId) =>
+      _get('purchases.php', {'action': 'get', 'business_id': '$businessId', 'purchase_id': '$purchaseId'});
+
+  Future<Map<String, dynamic>> createPurchase({
+    required int businessId,
+    int? supplierId,
+    required List<Map<String, dynamic>> items,
+    double paidAmount = 0,
+    String notes = '',
+  }) {
+    final opId = _uuid.v4();
+    return _post('purchases.php', {
+      'action': 'create', 'business_id': businessId,
+      'supplier_id': ?supplierId,
+      'items': items, 'paid_amount': paidAmount, 'notes': notes, 'client_op_id': opId,
+    });
+  }
+
+  Future<Map<String, dynamic>> recordPurchasePayment({
+    required int businessId,
+    required int purchaseId,
+    required double amount,
+    String method = 'cash',
+    String note = '',
+  }) => _post('purchases.php', {
+        'action': 'record_payment', 'business_id': businessId, 'purchase_id': purchaseId,
+        'amount': amount, 'method': method, 'note': note,
+      });
+
+  // ═══════════════════════════════════════════════════════════════════════
   // Stock ledger
   // ═══════════════════════════════════════════════════════════════════════
   Future<List<Map<String, dynamic>>> stockCard(int businessId, int productId) async {

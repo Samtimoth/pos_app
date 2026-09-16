@@ -8,6 +8,7 @@ class Supplier {
   final bool isActive;
   final int batchesCount;
   final double totalSpent;
+  final double totalOwed;
   final String? lastPurchaseAt;
 
   const Supplier({
@@ -20,6 +21,7 @@ class Supplier {
     this.isActive = true,
     this.batchesCount = 0,
     this.totalSpent = 0,
+    this.totalOwed = 0,
     this.lastPurchaseAt,
   });
 
@@ -33,6 +35,7 @@ class Supplier {
         isActive: '${j['is_active'] ?? 1}' == '1',
         batchesCount: int.tryParse('${j['batches_count'] ?? 0}') ?? 0,
         totalSpent: double.tryParse('${j['total_spent'] ?? 0}') ?? 0,
+        totalOwed: double.tryParse('${j['total_owed'] ?? 0}') ?? 0,
         lastPurchaseAt: j['last_purchase_at'] as String?,
       );
 }

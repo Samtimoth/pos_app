@@ -6,6 +6,7 @@ import '../providers/theme_provider.dart';
 import '../theme/app_theme.dart';
 import '../widgets/first_run_tutorial.dart';
 import '../l10n/app_l10n.dart';
+import 'purchases_screen.dart';
 import 'suppliers_screen.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -32,7 +33,7 @@ class _ManageScreenState extends State<ManageScreen>
     super.initState();
     final user = context.read<AppProvider>().user;
     _visible = [
-      if (user == null || user.canManageProducts) ...['categories', 'units', 'suppliers'],
+      if (user == null || user.canManageProducts) ...['categories', 'units', 'suppliers', 'purchases'],
       if (user == null || user.canManageStaff) 'staff',
     ];
     var initIdx = widget.initialTab;
@@ -120,6 +121,11 @@ class _ManageScreenState extends State<ManageScreen>
                 icon: const Icon(Icons.local_shipping_outlined, size: 16),
                 text: l.isSw ? 'Wasambazaji' : 'Suppliers',
               )
+            else if (t == 'purchases')
+              Tab(
+                icon: const Icon(Icons.move_to_inbox_outlined, size: 16),
+                text: l.isSw ? 'Manunuzi' : 'Purchases',
+              )
             else
               Tab(
                 icon: const Icon(Icons.people_alt_rounded, size: 16),
@@ -157,6 +163,8 @@ class _ManageScreenState extends State<ManageScreen>
                     _UnitTab(desktop: true)
                   else if (t == 'suppliers')
                     const SuppliersScreen(desktop: true)
+                  else if (t == 'purchases')
+                    const PurchasesScreen(desktop: true)
                   else
                     _StaffTab(desktop: true),
               ],
@@ -241,6 +249,8 @@ class _ManageScreenState extends State<ManageScreen>
                       _UnitTab(desktop: false)
                     else if (t == 'suppliers')
                       const SuppliersScreen(desktop: false)
+                    else if (t == 'purchases')
+                      const PurchasesScreen(desktop: false)
                     else
                       _StaffTab(desktop: false),
                 ],
