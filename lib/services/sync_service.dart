@@ -276,6 +276,7 @@ class SyncService extends ChangeNotifier {
           expiryDate: p['expiryDate'] as String? ?? '',
           notes: p['notes'] as String? ?? '',
           clientOpId: opId,
+          supplierId: (p['supplierId'] as num?)?.toInt(),
         );
 
       case 'manage_units':

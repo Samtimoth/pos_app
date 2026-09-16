@@ -150,6 +150,55 @@ class CrmApi {
   }
 
   // ═══════════════════════════════════════════════════════════════════════
+  // Suppliers (Hatua 5) — online-only by design (low-frequency, not part
+  // of the offline sale-time write path the way customers can be).
+  // ═══════════════════════════════════════════════════════════════════════
+  Future<List<Map<String, dynamic>>> listSuppliers(int businessId, {String q = ''}) async {
+    final r = await _cached('suppliers:$businessId',
+        () => _get('suppliers.php', {'action': 'list', 'business_id': '$businessId'}));
+    final all = ((r['suppliers'] as List?) ?? [])
+        .map((e) => Map<String, dynamic>.from(e as Map))
+        .toList();
+    if (q.trim().isEmpty) return all;
+    final s = q.trim().toLowerCase();
+    return all
+        .where((c) => '${c['name']}'.toLowerCase().contains(s) || '${c['phone']}'.contains(s))
+        .toList();
+  }
+
+  Future<Map<String, dynamic>> getSupplier(int businessId, int supplierId) => _cached(
+        'supplier:$businessId:$supplierId',
+        () => _get('suppliers.php', {'action': 'get', 'business_id': '$businessId', 'supplier_id': '$supplierId'}),
+      );
+
+  Future<Map<String, dynamic>> saveSupplier({
+    required int businessId,
+    int? supplierId,
+    required String name,
+    String phone = '',
+    String email = '',
+    String address = '',
+    String notes = '',
+  }) async {
+    final r = await _post('suppliers.php', {
+      'action': supplierId == null ? 'add' : 'update',
+      'business_id': businessId,
+      'supplier_id': ?supplierId,
+      'name': name, 'phone': phone, 'email': email, 'address': address, 'notes': notes,
+    });
+    if (r['success'] == true) await _db.removeCacheWhere('suppliers:$businessId');
+    return r;
+  }
+
+  Future<Map<String, dynamic>> deleteSupplier(int businessId, int supplierId) async {
+    final r = await _post('suppliers.php', {
+      'action': 'delete', 'business_id': businessId, 'supplier_id': supplierId,
+    });
+    if (r['success'] == true) await _db.removeCacheWhere('suppliers:$businessId');
+    return r;
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
   // Stock ledger
   // ═══════════════════════════════════════════════════════════════════════
   Future<List<Map<String, dynamic>>> stockCard(int businessId, int productId) async {

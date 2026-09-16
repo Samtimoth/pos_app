@@ -329,6 +329,7 @@ class ApiService {
     String expiryDate  = '',
     String notes       = '',
     String? clientOpId,
+    int? supplierId,
   }) async {
     final res = await _client
         .post(
@@ -343,6 +344,7 @@ class ApiService {
             'expiry_date':  expiryDate,
             'notes':        notes,
             'client_op_id': ?clientOpId,
+            'supplier_id':  ?supplierId,
           }),
         )
         .timeout(const Duration(seconds: 20));

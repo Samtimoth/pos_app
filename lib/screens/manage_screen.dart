@@ -6,6 +6,7 @@ import '../providers/theme_provider.dart';
 import '../theme/app_theme.dart';
 import '../widgets/first_run_tutorial.dart';
 import '../l10n/app_l10n.dart';
+import 'suppliers_screen.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Manage Screen — Categories + Units
@@ -31,7 +32,7 @@ class _ManageScreenState extends State<ManageScreen>
     super.initState();
     final user = context.read<AppProvider>().user;
     _visible = [
-      if (user == null || user.canManageProducts) ...['categories', 'units'],
+      if (user == null || user.canManageProducts) ...['categories', 'units', 'suppliers'],
       if (user == null || user.canManageStaff) 'staff',
     ];
     var initIdx = widget.initialTab;
@@ -114,6 +115,11 @@ class _ManageScreenState extends State<ManageScreen>
                 icon: const Icon(Icons.straighten_rounded, size: 16),
                 text: l.unitsTab,
               )
+            else if (t == 'suppliers')
+              Tab(
+                icon: const Icon(Icons.local_shipping_outlined, size: 16),
+                text: l.isSw ? 'Wasambazaji' : 'Suppliers',
+              )
             else
               Tab(
                 icon: const Icon(Icons.people_alt_rounded, size: 16),
@@ -149,6 +155,8 @@ class _ManageScreenState extends State<ManageScreen>
                     _CategoryTab(desktop: true)
                   else if (t == 'units')
                     _UnitTab(desktop: true)
+                  else if (t == 'suppliers')
+                    const SuppliersScreen(desktop: true)
                   else
                     _StaffTab(desktop: true),
               ],
@@ -231,6 +239,8 @@ class _ManageScreenState extends State<ManageScreen>
                       _CategoryTab(desktop: false)
                     else if (t == 'units')
                       _UnitTab(desktop: false)
+                    else if (t == 'suppliers')
+                      const SuppliersScreen(desktop: false)
                     else
                       _StaffTab(desktop: false),
                 ],

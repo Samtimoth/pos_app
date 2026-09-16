@@ -454,6 +454,7 @@ class OfflineApiService extends ApiService {
     String expiryDate = '',
     String notes = '',
     String? clientOpId,
+    int? supplierId,
   }) {
     Future<Map<String, dynamic>> offline() async {
       await _db.adjustStock(businessId, productId, quantity.toDouble());
@@ -462,6 +463,7 @@ class OfflineApiService extends ApiService {
         'quantity': quantity, 'buyPrice': buyPrice,
         'batchNumber': batchNumber, 'expiryDate': expiryDate, 'notes': notes,
         'createdAt': _now(),
+        'supplierId': ?supplierId,
       }, opId: clientOpId);
       return _offlineOk('Stock imeongezwa offline — itatumwa ukiwa online');
     }
@@ -471,7 +473,7 @@ class OfflineApiService extends ApiService {
       () => super.addProductBatch(
         productId: productId, businessId: businessId, quantity: quantity,
         buyPrice: buyPrice, batchNumber: batchNumber, expiryDate: expiryDate,
-        notes: notes, clientOpId: clientOpId,
+        notes: notes, clientOpId: clientOpId, supplierId: supplierId,
       ),
       offline,
     );
