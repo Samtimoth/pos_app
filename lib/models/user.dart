@@ -65,6 +65,9 @@ class User {
   bool get canReturnSales =>
       isSuperAdmin || _managerPlus.contains(_r) || _r == 'cashier';
 
+  /// Meneja/mmiliki — hawahitaji PIN ya idhini (wao ndio wanaoidhinisha wengine)
+  bool get isManagerTier => isSuperAdmin || _managerPlus.contains(_r);
+
   factory User.fromJson(Map<String, dynamic> json, String serverUrl) => User(
         userId:     int.parse((json['user_id'] ?? 0).toString()),
         username:   json['username']    as String? ?? '',

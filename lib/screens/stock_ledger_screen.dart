@@ -8,6 +8,7 @@ import '../models/product.dart';
 import '../providers/app_provider.dart';
 import '../services/crm_api.dart';
 import '../theme/app_theme.dart';
+import '../widgets/manager_pin_dialog.dart';
 
 /// Every stock change in the business (written by DB triggers) — sales, void,
 /// stock in, adjustments, edits. Filter by type; tap a row for details.
@@ -387,11 +388,27 @@ class _StockAdjustSheetState extends State<StockAdjustSheet> {
     final biz = app.selectedBusiness;
     final url = app.user?.serverUrl;
     if (biz == null || url == null) return;
+
+    // ── Idhini ya meneja: write-offs za hasara zinahitaji PIN isipokuwa
+    // mtumiaji mwenyewe ni meneja/mmiliki tayari (ona MANAGER_PIN_TIER server-side).
+    final isWriteOff = _type == 'damaged' || _type == 'lost' ||
+        (_type == 'correction' && _direction == 'minus');
+    String? managerPin;
+    if (isWriteOff && app.user?.isManagerTier != true) {
+      final typeLabel = switch (_type) {
+        'damaged' => 'imeharibika', 'lost' => 'imepotea', _ => 'marekebisho',
+      };
+      managerPin = await ManagerPinDialog.show(context,
+          reasonLabel: 'Marekebisho ya hasara ($typeLabel) yanahitaji meneja aweke PIN yake.');
+      if (managerPin == null) return; // cashier cancelled
+    }
+
     setState(() => _saving = true);
     try {
       final r = await CrmApi(url).adjustStock(
         businessId: biz.businessId, productId: widget.product.productId,
         adjustType: _type, qty: q, reason: _reason.text.trim(), direction: _direction,
+        managerPin: managerPin,
       );
       if (!mounted) return;
       if (r['success'] == true) {

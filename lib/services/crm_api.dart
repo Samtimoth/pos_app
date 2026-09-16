@@ -172,12 +172,14 @@ class CrmApi {
     required double qty,
     String reason = '',
     String direction = 'plus',
+    String? managerPin,
   }) async {
     final opId = _uuid.v4();
     final body = {
       'action': 'adjust', 'business_id': businessId, 'product_id': productId,
       'adjust_type': adjustType, 'qty': qty, 'reason': reason, 'direction': direction,
       'client_op_id': opId,
+      if (managerPin != null && managerPin.isNotEmpty) 'manager_pin': managerPin,
     };
     if (await _online() && productId > 0) {
       try {
@@ -217,6 +219,16 @@ class CrmApi {
     return {'success': true, 'offline': true, 'message': 'Marekebisho yamehifadhiwa offline',
             'stock_before': cur, 'stock_after': cur + delta, 'delta': delta};
   }
+
+  /// Manager sets/changes their own approval PIN (4-6 digits). Requires network.
+  Future<Map<String, dynamic>> setManagerPin(int businessId, String pin) =>
+      _post('manager_pin.php', {'action': 'set', 'business_id': businessId, 'pin': pin});
+
+  /// Checks a PIN against any manager-tier user's PIN in this business.
+  /// Requires network — used for a quick pre-check before an offline-queued
+  /// adjustment; the server re-verifies for real once it syncs regardless.
+  Future<Map<String, dynamic>> verifyManagerPin(int businessId, String pin) =>
+      _post('manager_pin.php', {'action': 'verify', 'business_id': businessId, 'pin': pin});
 
   // ═══════════════════════════════════════════════════════════════════════
   // Sync helpers (called by SyncService)

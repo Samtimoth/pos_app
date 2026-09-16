@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/app_provider.dart';
+import '../services/crm_api.dart';
 import '../theme/app_theme.dart';
 import '../widgets/first_run_tutorial.dart';
+import '../widgets/manager_pin_dialog.dart';
 import 'payment_screen.dart';
 import 'manage_screen.dart';
 
@@ -255,8 +257,41 @@ class _ProfileScreenState extends State<ProfileScreen>
           Navigator.of(context).pop();
         },
       ),
+      if (context.read<AppProvider>().user?.isManagerTier == true) ...[
+        const SizedBox(height: 10),
+        _linkRow(
+          icon: Icons.admin_panel_settings_rounded,
+          color: AppColors.chartOrange,
+          title: 'Weka PIN ya Idhini',
+          subtitle: 'Tumika kuthibitisha marekebisho ya hasara ya stock',
+          onTap: _setManagerPin,
+        ),
+      ],
     ]),
   );
+
+  Future<void> _setManagerPin() async {
+    final app = context.read<AppProvider>();
+    final biz = app.selectedBusiness;
+    final url = app.user?.serverUrl;
+    if (biz == null || url == null) return;
+    final pin = await ManagerPinDialog.show(context,
+        reasonLabel: 'Weka PIN mpya ya tarakimu 4-6. Cashier ataitumia kuthibitisha marekebisho ya hasara.');
+    if (pin == null || !mounted) return;
+    try {
+      final r = await CrmApi(url).setManagerPin(biz.businessId, pin);
+      if (!mounted) return;
+      if (r['success'] == true) {
+        AppNotification.show(context, '${r['message'] ?? 'PIN imehifadhiwa'}', AppColors.accent,
+            icon: Icons.check_circle_rounded);
+      } else {
+        AppNotification.show(context, '${r['message'] ?? 'Hitilafu'}', AppColors.chartRed,
+            icon: Icons.error_rounded);
+      }
+    } catch (e) {
+      if (mounted) AppNotification.show(context, '$e', AppColors.chartRed, icon: Icons.error_rounded);
+    }
+  }
 
   Widget _linkRow({
     required IconData icon,
