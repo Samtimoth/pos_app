@@ -51,6 +51,10 @@ Ukaguzi kamili (audit) ulifanyika 2026-09-14: features 140 zilichunguliwa — ap
 - ✅ **Manager PIN approval (2026-09-16)**: `helpers/manager_pin.php` (`pin_hash` column kwenye tbl_user, self-adding) + `manager_pin.php` endpoint (set/verify). `stock_movements.php`'s adjust action sasa inahitaji PIN sahihi kwa write-offs za hasara (damaged/lost/correction-minus) ISIPOKUWA mtumaji ni Owner/Admin/Manager/SuperAdmin tayari — meneja YEYOTE aliyepo anaweza kuidhinisha. UI: `manager_pin_dialog.dart` (numeric keypad dialog), kitufe "Weka PIN ya Idhini" kwenye Profile (manager-tier pekee), kimeunganishwa kwenye `StockAdjustSheet`. Jina la aliyeidhinisha linaongezwa kwenye ledger reason. Reusable kwa Hatua 4's "discount + manager PIN". Deployed + smoke-tested live, push (commit a447ab0). **Hii ndiyo kipengele cha mwisho cha P0 kwenye Hatua 3 — Hatua 3 sasa IMEKAMILIKA kwa vitendo.**
 - ❌ Bado (si P0, si dharura): StockService moja kwa writes ZOTE (usanifu tu — ledger tayari ipo kwa writes zote kupitia trigger `trg_product_au`), opening-balance backfill kwa bidhaa za zamani (hali haijulikani — angalia `stock_movements` movement_type='opening' counts).
 
+## Hatua 4 — P1: 🟡 IMEANZA (siyo P0, lakini kazi imeanza kabla ya wakati)
+- ✅ **Punguzo la jumla + idhini ya meneja (2026-09-16)**: `DiscountField` widget kwenye POS checkout (imezimwa kwa default), `create_sale.php` inakubali `overall_discount`; punguzo linalozidi 10% ya subtotal linahitaji `manager_pin` sahihi (kutumia `helpers/manager_pin.php` ile ile ya Hatua 3) isipokuwa mtumaji ni Owner/Admin/Manager/SuperAdmin. Grand total (baada ya punguzo) inatumika kwa split payment target + risiti (Total/Paid/Change) — si `cart.total` ya subtotal. Inafanya kazi offline (discount+PIN zinapitia sync queue). Deployed + smoke-tested live, push (commit 65d1a93).
+- ❌ Bado: register/shift (fungua/funga, expected vs actual), VAT settings + risiti rasmi, hold/resume sale, receipt template designer (logo, QR, 58/80mm, A4).
+
 ## FTP / Deploy
 - Credentials: `%USERPROFILE%\.duka_ftp.env` (FTP_HOST=ftp.dadcas.com, API dir `/pos/api`, web dir `/pos/app`) — **nje ya repo, usi-print**.
 - Tools: `tools/deploy.py` (check | pull-api | patch-api | push-api | build-web | push-web | web | api), `tools/sync_web.py` (resumable web deploy).
@@ -63,6 +67,7 @@ Ukaguzi kamili (audit) ulifanyika 2026-09-14: features 140 zilichunguliwa — ap
 2. **Hatua 3**: ~~batches mbili → moja~~ ✅, ~~FEFO~~ ✅, ~~approval ya adjustments (Manager PIN)~~ ✅ (zote 2026-09-16). **Hatua 3 kwa vitendo IMEKAMILIKA.** Kimebaki tu vitu visivyo P0: StockService moja (usanifu, si bug), opening backfill kwa bidhaa za zamani (haijathibitishwa).
 3. **Usalama wa ziada (Hatua 1 residuals)**: badilisha DB/FTP passwords (za sasa zimeonekana kwenye chat — dharura); ~~backup ya usiku~~ ✅ script tayari (`db_backup.php`) — **inasubiri tu mtumiaji aweke Cron Job kwenye cPanel** (tazama Hatua 1 hapo juu kwa command); offsite copy bado haijapangwa.
 4. Kabla ya 2026-10-31: hakikisha app zote zimetoka na token auth, kisha weka `AUTH_ALLOW_LEGACY = false`.
+5. **Hatua 4 (P1) — imeanza**: ~~discount + manager PIN~~ ✅ (2026-09-16). Kimebaki: register/shift, VAT settings+risiti, hold/resume sale, receipt template designer.
 
 # Maamuzi muhimu (yaliyokubaliwa)
 
@@ -73,6 +78,7 @@ Ukaguzi kamili (audit) ulifanyika 2026-09-14: features 140 zilichunguliwa — ap
 
 # Log (mfululizo wa kazi)
 
+- 2026-09-16 (8): **Hatua 4: Punguzo la jumla + idhini ya meneja** — `discount_field.dart` (UI, imezimwa default), `create_sale.php` inakubali `overall_discount` (>10% ya subtotal inahitaji manager_pin, kutumia helpers/manager_pin.php ile ile ya stock write-offs), split payment + risiti sasa zinatumia grand total (baada ya punguzo). `flutter analyze` 0, `flutter test` 27/27, deployed + smoke-tested live, push (commit 65d1a93). Hatua 4 (P1) imeanza kabla ya wakati wake kwa sababu ilikuwa rahisi kutumia miundombinu ya PIN iliyojengwa kwa Hatua 3.
 - 2026-09-16 (7): **Manager PIN approval kwa stock write-offs** — `helpers/manager_pin.php`, `manager_pin.php` endpoint, `manager_pin_dialog.dart` UI, kitufe cha kuweka PIN kwenye Profile, kimeunganishwa kwenye `StockAdjustSheet`. `flutter analyze` 0, `flutter test` 27/27, deployed + smoke-tested live (pin_hash column self-created, no 500s), push (commit a447ab0). **Hatua 3 (Stock ledger) sasa IMEKAMILIKA kwa vitendo** — P0 zote za Hatua 1, 2, na 3 kutoka audit ya 2026-09-14 zimekamilika.
 - 2026-09-16 (6): **Hatua 3: batch tables unified + FEFO** — `helpers/batches.php` (`product_batch_add()`), `add_product.php`/`import_products.php` sasa zinaandika `product_batches` (si `tbl_product_stock_batch` pekee), `create_sale.php`/`get_product_batches.php` zina FEFO order. `add_stock.php` imethibitishwa dead code (haijaguswa). Backend-only, `php -l` zote clean, deployed + smoke-tested live (0 files no 500), push (commit 2a9007b).
 - 2026-09-16 (5): **Credit notes** — `_CreditNoteSheet` kwenye `sale_return_sheet.dart` inachapisha hati rasmi ya marejesho baada ya return, kwa PDF (pattern ileile ya risiti). Hakuna backend/DB mabadiliko. `flutter analyze` 0, `flutter test` 27/27, push (commit c543a40). **Hatua 2 (Wateja/Malipo/Marejesho) sasa IMEKAMILIKA kwa vitendo** — kimebaki tu Checkout widget moja, kilichoahirishwa kwa makusudi.
