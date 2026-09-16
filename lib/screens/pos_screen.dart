@@ -8,11 +8,14 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:printing/printing.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
+import 'package:barcode/barcode.dart' as bc;
+import 'package:http/http.dart' as http;
 import '../models/customer.dart';
 import '../models/product.dart';
 import '../models/sale.dart';
 import '../providers/app_provider.dart';
 import '../providers/cart_provider.dart';
+import '../services/storage_service.dart';
 import '../theme/app_theme.dart';
 import '../l10n/app_l10n.dart';
 import '../utils/cat_style.dart';
@@ -1857,6 +1860,8 @@ class _CartPanelState extends State<_CartPanel> {
           changeAmount: (res['change_amount'] as num?)?.toDouble() ??
               (_splitPay.enabled ? _splitPay.changeAmount : null),
           discount: (res['discount_amount'] as num?)?.toDouble() ?? _discount,
+          cashierName: app.user?.fullname ?? '',
+          logoUrl: app.selectedBusiness?.logoPath ?? '',
           items: cart.items
               .map(
                 (i) => _PosReceiptItem(
@@ -2538,6 +2543,8 @@ class _CartSheetState extends State<_CartSheet> {
           changeAmount: (res['change_amount'] as num?)?.toDouble() ??
               (_splitPay.enabled ? _splitPay.changeAmount : null),
           discount: (res['discount_amount'] as num?)?.toDouble() ?? _discount,
+          cashierName: app.user?.fullname ?? '',
+          logoUrl: app.selectedBusiness?.logoPath ?? '',
           items: cart.items
               .map(
                 (i) => _PosReceiptItem(
@@ -3241,6 +3248,8 @@ class _PosReceiptData {
   final double amountPaid;
   final double? changeOverride;
   final double discount;
+  final String cashierName;
+  final String logoUrl;
   final List<_PosReceiptItem> items;
 
   const _PosReceiptData({
@@ -3256,6 +3265,8 @@ class _PosReceiptData {
     required this.amountPaid,
     this.changeOverride,
     this.discount = 0,
+    this.cashierName = '',
+    this.logoUrl = '',
     required this.items,
   });
 
@@ -3275,6 +3286,8 @@ class _PosReceiptData {
     required double amountPaid,
     double? changeAmount,
     double discount = 0,
+    String cashierName = '',
+    String logoUrl = '',
     required List<_PosReceiptItem> items,
   }) {
     final data = response['data'];
@@ -3303,15 +3316,35 @@ class _PosReceiptData {
       amountPaid: amountPaid,
       changeOverride: changeAmount != null && changeAmount > 0 ? changeAmount : null,
       discount: discount,
+      cashierName: cashierName,
+      logoUrl: logoUrl,
       items: items,
     );
   }
 }
 
-class _PosReceiptSheet extends StatelessWidget {
+class _PosReceiptSheet extends StatefulWidget {
   final _PosReceiptData receipt;
   final NumberFormat fmt;
   const _PosReceiptSheet({required this.receipt, required this.fmt});
+
+  @override
+  State<_PosReceiptSheet> createState() => _PosReceiptSheetState();
+}
+
+class _PosReceiptSheetState extends State<_PosReceiptSheet> {
+  static const _paperLabels = {'58mm': '58mm', '80mm': '80mm', 'a4': 'A4'};
+  String _paperSize = '80mm';
+  bool _printing = false;
+
+  _PosReceiptData get receipt => widget.receipt;
+  NumberFormat get fmt => widget.fmt;
+
+  @override
+  void initState() {
+    super.initState();
+    _paperSize = StorageService.getString('receipt_paper_size') ?? '80mm';
+  }
 
   String _label(String v) {
     switch (v) {
@@ -3420,6 +3453,17 @@ class _PosReceiptSheet extends StatelessWidget {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
+                          if (receipt.logoUrl.isNotEmpty)
+                            Center(
+                              child: Padding(
+                                padding: const EdgeInsets.only(bottom: 6),
+                                child: Image.network(
+                                  receipt.logoUrl,
+                                  height: 44,
+                                  errorBuilder: (_, _, _) => const SizedBox.shrink(),
+                                ),
+                              ),
+                            ),
                           Center(
                             child: Text(
                               receipt.businessName.toUpperCase(),
@@ -3434,6 +3478,8 @@ class _PosReceiptSheet extends StatelessWidget {
                           const SizedBox(height: 12),
                           _r('Receipt No', receipt.receiptNo),
                           _r('Date', dateFmt.format(receipt.date)),
+                          if (receipt.cashierName.isNotEmpty)
+                            _r('Muuzaji', receipt.cashierName),
                           _r('Customer', receipt.customerName),
                           if (receipt.customerPhone.isNotEmpty)
                             _r('Phone', receipt.customerPhone),
@@ -3494,7 +3540,29 @@ class _PosReceiptSheet extends StatelessWidget {
                       ),
                     ),
                   ),
-                  const SizedBox(height: 14),
+                  const SizedBox(height: 10),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: _paperLabels.entries.map((e) {
+                      final sel = _paperSize == e.key;
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 4),
+                        child: ChoiceChip(
+                          label: Text(e.value, style: const TextStyle(fontSize: 11)),
+                          selected: sel,
+                          onSelected: (_) {
+                            setState(() => _paperSize = e.key);
+                            StorageService.saveString('receipt_paper_size', e.key);
+                          },
+                          selectedColor: AppColors.accent.withAlpha(60),
+                          backgroundColor: AppColors.bg,
+                          labelStyle: TextStyle(color: sel ? AppColors.accent : AppColors.textMuted),
+                          visualDensity: VisualDensity.compact,
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                  const SizedBox(height: 10),
                   Row(
                     children: [
                       Expanded(
@@ -3510,13 +3578,18 @@ class _PosReceiptSheet extends StatelessWidget {
                       const SizedBox(width: 10),
                       Expanded(
                         child: ElevatedButton.icon(
-                          onPressed: () => _printReceipt(fmt),
-                          icon: Icon(
-                            Icons.print_rounded,
-                            color: AppColors.bgDark,
-                          ),
+                          onPressed: _printing ? null : () => _printReceipt(fmt),
+                          icon: _printing
+                              ? SizedBox(
+                                  width: 16, height: 16,
+                                  child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.bgDark),
+                                )
+                              : Icon(
+                                  Icons.print_rounded,
+                                  color: AppColors.bgDark,
+                                ),
                           label: Text(
-                            'Print Receipt',
+                            _printing ? 'Inaandaa...' : 'Print Receipt',
                             style: TextStyle(
                               color: AppColors.bgDark,
                               fontWeight: FontWeight.bold,
@@ -3572,15 +3645,48 @@ class _PosReceiptSheet extends StatelessWidget {
         ),
       );
 
+  PdfPageFormat _pageFormatFor(String size) => switch (size) {
+        '58mm' => PdfPageFormat(58 * PdfPageFormat.mm, double.infinity,
+            marginAll: 3 * PdfPageFormat.mm),
+        'a4' => PdfPageFormat.a4,
+        _ => PdfPageFormat.roll80,
+      };
+
   Future<void> _printReceipt(NumberFormat fmt) async {
+    setState(() => _printing = true);
+    pw.MemoryImage? logo;
+    if (receipt.logoUrl.isNotEmpty) {
+      try {
+        final res = await http
+            .get(Uri.parse(receipt.logoUrl))
+            .timeout(const Duration(seconds: 8));
+        if (res.statusCode == 200 && res.bodyBytes.isNotEmpty) {
+          logo = pw.MemoryImage(res.bodyBytes);
+        }
+      } catch (_) {
+        // Logo ni ziada tu — risiti inaendelea kuchapishwa bila logo.
+      }
+    }
+    if (!mounted) return;
+
     final dateFmt = DateFormat('dd MMM yyyy, HH:mm');
+    final qrData =
+        '${receipt.businessName}\nRisiti: ${receipt.receiptNo}\nTarehe: ${dateFmt.format(receipt.date)}\nJumla: TZS ${fmt.format(receipt.total)}';
     final doc = pw.Document();
     doc.addPage(
       pw.Page(
-        pageFormat: PdfPageFormat.roll80,
+        pageFormat: _pageFormatFor(_paperSize),
         build: (ctx) => pw.Column(
           crossAxisAlignment: pw.CrossAxisAlignment.stretch,
           children: [
+            if (logo != null)
+              pw.Center(
+                child: pw.Container(
+                  height: 50,
+                  margin: const pw.EdgeInsets.only(bottom: 6),
+                  child: pw.Image(logo),
+                ),
+              ),
             pw.Center(
               child: pw.Text(
                 receipt.businessName.toUpperCase(),
@@ -3599,6 +3705,8 @@ class _PosReceiptSheet extends StatelessWidget {
             pw.SizedBox(height: 8),
             _pdfRow('Receipt No', receipt.receiptNo),
             _pdfRow('Date', dateFmt.format(receipt.date)),
+            if (receipt.cashierName.isNotEmpty)
+              _pdfRow('Muuzaji', receipt.cashierName),
             _pdfRow('Customer', receipt.customerName),
             if (receipt.customerPhone.isNotEmpty)
               _pdfRow('Phone', receipt.customerPhone),
@@ -3644,6 +3752,15 @@ class _PosReceiptSheet extends StatelessWidget {
               _pdfMoney('Change', receipt.change, fmt, bold: true),
             pw.SizedBox(height: 12),
             pw.Center(
+              child: pw.BarcodeWidget(
+                barcode: bc.Barcode.qrCode(),
+                data: qrData,
+                width: 70,
+                height: 70,
+              ),
+            ),
+            pw.SizedBox(height: 8),
+            pw.Center(
               child: pw.Text(
                 receipt.footerMessage,
                 textAlign: pw.TextAlign.center,
@@ -3657,7 +3774,11 @@ class _PosReceiptSheet extends StatelessWidget {
         ),
       ),
     );
-    await Printing.layoutPdf(onLayout: (_) => doc.save());
+    try {
+      await Printing.layoutPdf(onLayout: (_) => doc.save());
+    } finally {
+      if (mounted) setState(() => _printing = false);
+    }
   }
 
   pw.Widget _pdfRow(String k, String v) => pw.Padding(
