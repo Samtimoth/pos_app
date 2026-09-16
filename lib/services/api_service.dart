@@ -186,6 +186,7 @@ class ApiService {
     String? createdAt,
     String customerPhone = '',
     int? customerId,
+    List<Map<String, dynamic>>? payments,
   }) async {
     final res = await _client
         .post(
@@ -203,6 +204,7 @@ class ApiService {
             'amount_paid': amountPaid,
             'client_op_id': ?clientOpId,
             'created_at': ?createdAt,
+            if (payments != null && payments.isNotEmpty) 'payments': payments,
           }),
         )
         .timeout(const Duration(seconds: 30));
@@ -565,6 +567,20 @@ class ApiService {
       final res  = await _client.get(uri).timeout(const Duration(seconds: 10));
       final body = _decode(res) as Map<String, dynamic>;
       if (body['success'] == true) return body['payments'] as List? ?? [];
+    } catch (_) {}
+    return [];
+  }
+
+  /// Split-payment breakdown (Cash/M-Pesa/Bank) recorded at checkout time,
+  /// if the sale used it — separate from [getSalePayments]'s repayment
+  /// history so callers can show "Cash 3,000 · M-Pesa 2,000" chips.
+  Future<List<dynamic>> getSalePaymentBreakdown(int saleId) async {
+    try {
+      final uri = Uri.parse('$baseUrl/get_sale_payments.php')
+          .replace(queryParameters: {'sale_id': saleId.toString()});
+      final res  = await _client.get(uri).timeout(const Duration(seconds: 10));
+      final body = _decode(res) as Map<String, dynamic>;
+      if (body['success'] == true) return body['breakdown'] as List? ?? [];
     } catch (_) {}
     return [];
   }

@@ -275,8 +275,25 @@ def cmd_push_files(cfg):
     ftp.quit()
 
 
+def cmd_delete_files(cfg):
+    """python tools/deploy.py delete-files a.php b.php  → remove from FTP_API_DIR (no backup)"""
+    names = sys.argv[2:]
+    if not names:
+        sys.exit('!! taja files: delete-files _diag_schema.php ...')
+    ftp = connect(cfg)
+    api_dir = cfg['FTP_API_DIR']
+    for n in names:
+        try:
+            ftp.delete(posixpath.join(api_dir, n))
+            print('  ✗', n)
+        except ftplib.error_perm as e:
+            print('  ? haipo au haikuweza kufutwa:', n, '-', e)
+    ftp.quit()
+
+
 COMMANDS = {
     'push-files': [cmd_push_files],
+    'delete-files': [cmd_delete_files],
     'check': [cmd_check],
     'pull-api': [cmd_pull_api],
     'patch-api': [cmd_patch_api],

@@ -147,6 +147,7 @@ class SyncService extends ChangeNotifier {
           it['product_id'] = await _real('product', it['product_id']);
         }
         final custId = p['customerId'];
+        final rawPayments = p['payments'] as List?;
         final res = await api.createSale(
           businessId: biz,
           branchId: p['branchId'] as int,
@@ -158,6 +159,9 @@ class SyncService extends ChangeNotifier {
           createdAt: p['createdAt'] as String?,
           customerPhone: p['customerPhone'] as String? ?? '',
           customerId: custId is int ? await _real('customer', custId) : null,
+          payments: rawPayments
+              ?.map((e) => Map<String, dynamic>.from(e as Map))
+              .toList(),
         );
         if (res['success'] == true) {
           final data = res['data'];

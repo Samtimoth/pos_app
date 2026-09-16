@@ -705,6 +705,7 @@ class OfflineApiService extends ApiService {
     String? createdAt,
     String customerPhone = '',
     int? customerId,
+    List<Map<String, dynamic>>? payments,
   }) {
     final opId = clientOpId ?? _uuid.v4();
     final when = createdAt ?? _now();
@@ -715,7 +716,7 @@ class OfflineApiService extends ApiService {
           businessId: businessId, branchId: branchId,
           customerName: customerName, transactionType: transactionType,
           items: items, amountPaid: amountPaid, clientOpId: opId, createdAt: whenUtc,
-          customerPhone: customerPhone, customerId: customerId,
+          customerPhone: customerPhone, customerId: customerId, payments: payments,
         );
         if (res['success'] == true && _deductsStock(transactionType)) {
           // Keep local stock in step so the POS grid is right immediately.
@@ -789,10 +790,19 @@ class OfflineApiService extends ApiService {
           'customerName': customerName, 'transactionType': transactionType,
           'items': items, 'amountPaid': amountPaid, 'createdAt': whenUtc,
           'customerPhone': phone, 'customerId': customerId,
+          if (payments != null && payments.isNotEmpty) 'payments': payments,
         }, opId: opId);
+        var change = 0.0;
+        if (payments != null) {
+          for (final p in payments) {
+            final amt = double.tryParse('${p['amount']}') ?? 0;
+            final tendered = double.tryParse('${p['tendered'] ?? ''}');
+            if (tendered != null && tendered > amt) change += tendered - amt;
+          }
+        }
         return _offlineOk('Mauzo yamehifadhiwa offline — yatatumwa ukiwa online', {
           'sale_id': tempId, 'sale_no': saleNo, 'receipt_no': saleNo,
-          'data': saleJson,
+          'data': saleJson, 'change_amount': change,
         });
       },
     );

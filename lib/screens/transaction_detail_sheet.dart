@@ -31,6 +31,7 @@ class _TransactionDetailSheetState extends State<TransactionDetailSheet>
     with TickerProviderStateMixin {
   List<Map<String, dynamic>> _items = [];
   List<SalePayment> _payments = [];
+  List<Map<String, dynamic>> _paymentBreakdown = [];
   bool _loadingItems = true;
   bool _loadingPayments = true;
   bool _processing = false;
@@ -115,6 +116,15 @@ class _TransactionDetailSheetState extends State<TransactionDetailSheet>
           _payments = raw
               .map((e) => SalePayment.fromJson(e as Map<String, dynamic>))
               .toList();
+        });
+      }
+    } catch (_) {}
+    try {
+      final raw = await app.api!.getSalePaymentBreakdown(widget.sale.saleId);
+      if (mounted) {
+        setState(() {
+          _paymentBreakdown =
+              raw.map((e) => Map<String, dynamic>.from(e as Map)).toList();
         });
       }
     } catch (_) {}
@@ -659,6 +669,10 @@ class _TransactionDetailSheetState extends State<TransactionDetailSheet>
                             Icons.history_rounded,
                           ),
                           const SizedBox(height: 8),
+                          if (_paymentBreakdown.length > 1) ...[
+                            _paymentBreakdownChips(l),
+                            const SizedBox(height: 8),
+                          ],
                           _paymentHistoryCard(l),
                           const SizedBox(height: 14),
                         ],
@@ -1010,6 +1024,34 @@ class _TransactionDetailSheetState extends State<TransactionDetailSheet>
           return _itemRow(e.value, e.key == _items.length - 1);
         }).toList(),
       ),
+    );
+  }
+
+  static const _breakdownLabels = {
+    'cash': 'Cash', 'mpesa': 'M-Pesa', 'bank': 'Benki', 'card': 'Kadi', 'other': 'Nyingine',
+  };
+
+  // ── Split-payment breakdown (Cash + M-Pesa + Bank) at checkout time ──────────
+  Widget _paymentBreakdownChips(L l) {
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: _paymentBreakdown.map((p) {
+        final method = '${p['method'] ?? 'other'}';
+        final amount = double.tryParse('${p['amount']}') ?? 0;
+        return Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color: AppColors.chartBlue.withAlpha(22),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: AppColors.chartBlue.withAlpha(70)),
+          ),
+          child: Text(
+            '${_breakdownLabels[method] ?? method}: TZS ${_fmt.format(amount)}',
+            style: TextStyle(color: AppColors.chartBlue, fontWeight: FontWeight.w700, fontSize: 12),
+          ),
+        );
+      }).toList(),
     );
   }
 

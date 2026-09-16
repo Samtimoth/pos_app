@@ -16,6 +16,7 @@ import '../theme/app_theme.dart';
 import '../l10n/app_l10n.dart';
 import '../utils/cat_style.dart';
 import '../widgets/first_run_tutorial.dart';
+import '../widgets/split_payment_field.dart';
 import 'customers_screen.dart';
 
 class PosScreen extends StatefulWidget {
@@ -1552,6 +1553,7 @@ class _CartPanelState extends State<_CartPanel> {
   String _customerMode = 'walkin';
   String _payType = 'cash';
   bool _processing = false;
+  SplitPaymentResult _splitPay = SplitPaymentResult.off;
 
   // Set when "Chagua mteja" is used; only trusted at checkout if the phone
   // field still matches what was picked (guards against a stale id if the
@@ -1626,6 +1628,16 @@ class _CartPanelState extends State<_CartPanel> {
       }
     }
 
+    if (_payType == 'cash' && _splitPay.enabled && !_splitPay.valid) {
+      _snack(
+        l.isSw
+            ? 'Jumla ya njia za malipo haiendani na jumla ya mauzo'
+            : 'Split payment total does not match the sale total',
+        Colors.orange,
+      );
+      return;
+    }
+
     if (app.api == null || app.selectedBusiness == null) return;
 
     setState(() => _processing = true);
@@ -1642,6 +1654,7 @@ class _CartPanelState extends State<_CartPanel> {
         amountPaid: _amountPaid(),
         customerPhone: phone,
         customerId: confirmedCustomerId,
+        payments: (_payType == 'cash' && _splitPay.enabled) ? _splitPay.payments : null,
       );
       if (!mounted) return;
       if (res['success'] == true) {
@@ -1659,6 +1672,8 @@ class _CartPanelState extends State<_CartPanel> {
           paymentType: _payType,
           total: cart.total,
           amountPaid: _amountPaid() ?? cart.total,
+          changeAmount: (res['change_amount'] as num?)?.toDouble() ??
+              (_splitPay.enabled ? _splitPay.changeAmount : null),
           items: cart.items
               .map(
                 (i) => _PosReceiptItem(
@@ -1690,6 +1705,7 @@ class _CartPanelState extends State<_CartPanel> {
           _payType = 'cash';
           _pickedCustomerId = null;
           _pickedCustomerPhone = null;
+          _splitPay = SplitPaymentResult.off;
         });
         _snack(
           res['offline'] == true
@@ -1982,6 +1998,11 @@ class _CartPanelState extends State<_CartPanel> {
                       ],
                       onChanged: (v) => setState(() => _payType = v!),
                     ),
+                    if (_payType == 'cash')
+                      SplitPaymentField(
+                        total: cart.total,
+                        onChanged: (r) => setState(() => _splitPay = r),
+                      ),
                     if (_payType != 'cash') ...[
                       const SizedBox(height: 10),
                       _PosInput(
@@ -2070,6 +2091,7 @@ class _CartSheetState extends State<_CartSheet> {
   String _customerMode = 'walkin';
   String _payType = 'cash';
   bool _processing = false;
+  SplitPaymentResult _splitPay = SplitPaymentResult.off;
 
   int? _pickedCustomerId;
   String? _pickedCustomerPhone;
@@ -2140,6 +2162,16 @@ class _CartSheetState extends State<_CartSheet> {
       }
     }
 
+    if (_payType == 'cash' && _splitPay.enabled && !_splitPay.valid) {
+      _snack(
+        l.isSw
+            ? 'Jumla ya njia za malipo haiendani na jumla ya mauzo'
+            : 'Split payment total does not match the sale total',
+        Colors.orange,
+      );
+      return;
+    }
+
     if (app.api == null || app.selectedBusiness == null) return;
     setState(() => _processing = true);
     try {
@@ -2155,6 +2187,7 @@ class _CartSheetState extends State<_CartSheet> {
         amountPaid: _amountPaid(),
         customerPhone: phone,
         customerId: confirmedCustomerId,
+        payments: (_payType == 'cash' && _splitPay.enabled) ? _splitPay.payments : null,
       );
       if (!mounted) return;
       if (res['success'] == true) {
@@ -2172,6 +2205,8 @@ class _CartSheetState extends State<_CartSheet> {
           paymentType: _payType,
           total: cart.total,
           amountPaid: _amountPaid() ?? cart.total,
+          changeAmount: (res['change_amount'] as num?)?.toDouble() ??
+              (_splitPay.enabled ? _splitPay.changeAmount : null),
           items: cart.items
               .map(
                 (i) => _PosReceiptItem(
@@ -2373,6 +2408,11 @@ class _CartSheetState extends State<_CartSheet> {
                         ],
                       ),
                     ),
+                    if (_payType == 'cash')
+                      SplitPaymentField(
+                        total: cart.total,
+                        onChanged: (r) => setState(() => _splitPay = r),
+                      ),
                     const SizedBox(height: 10),
                     _sectionLabel(l.isSw ? 'Mteja' : 'Customer'),
                     const SizedBox(height: 6),
@@ -2846,6 +2886,7 @@ class _PosReceiptData {
   final String paymentType;
   final double total;
   final double amountPaid;
+  final double? changeOverride;
   final List<_PosReceiptItem> items;
 
   const _PosReceiptData({
@@ -2859,11 +2900,13 @@ class _PosReceiptData {
     required this.paymentType,
     required this.total,
     required this.amountPaid,
+    this.changeOverride,
     required this.items,
   });
 
   double get balance => total - amountPaid > 0 ? total - amountPaid : 0;
-  double get change => amountPaid - total > 0 ? amountPaid - total : 0;
+  double get change =>
+      changeOverride ?? (amountPaid - total > 0 ? amountPaid - total : 0);
 
   factory _PosReceiptData.fromCart({
     required Map<String, dynamic> response,
@@ -2875,6 +2918,7 @@ class _PosReceiptData {
     required String paymentType,
     required double total,
     required double amountPaid,
+    double? changeAmount,
     required List<_PosReceiptItem> items,
   }) {
     final data = response['data'];
@@ -2901,6 +2945,7 @@ class _PosReceiptData {
       paymentType: paymentType,
       total: total,
       amountPaid: amountPaid,
+      changeOverride: changeAmount != null && changeAmount > 0 ? changeAmount : null,
       items: items,
     );
   }
