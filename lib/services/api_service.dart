@@ -870,6 +870,19 @@ class ApiService {
     return _decode(res) as Map<String, dynamic>;
   }
 
+  Future<Map<String, dynamic>> getSlowStock(int businessId,
+      {int? branchId, int days = 60, int slowThresholdDays = 90}) async {
+    final params = {
+      'business_id': businessId.toString(),
+      'days': '$days',
+      'slow_threshold_days': '$slowThresholdDays',
+      if (branchId != null) 'branch_id': branchId.toString(),
+    };
+    final uri = Uri.parse('$baseUrl/slow_stock.php').replace(queryParameters: params);
+    final res = await http.get(uri).timeout(const Duration(seconds: 30));
+    return _decode(res) as Map<String, dynamic>;
+  }
+
   // ── Expenses ──────────────────────────────────────────
   Future<List<dynamic>> listExpenses(int businessId,
       {int? branchId, String? dateFrom, String? dateTo}) async {

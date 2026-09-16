@@ -24,7 +24,7 @@ enum _Range { today, week, month, lastMonth, quarter, year, custom }
 
 class _ReportsScreenState extends State<ReportsScreen>
     with SingleTickerProviderStateMixin {
-  late final TabController _tab = TabController(length: 4, vsync: this);
+  late final TabController _tab = TabController(length: 5, vsync: this);
   final _fmt = NumberFormat('#,###', 'en_US');
   final _fmtD = NumberFormat('#,##0.#', 'en_US');
 
@@ -34,6 +34,7 @@ class _ReportsScreenState extends State<ReportsScreen>
 
   Map<String, dynamic>? _report;
   Map<String, dynamic>? _cashflow;
+  Map<String, dynamic>? _slowStock;
   bool _loading = true;
   bool _offline = false;
   bool _exporting = false;
@@ -104,14 +105,17 @@ class _ReportsScreenState extends State<ReportsScreen>
           dateFrom: _fromStr,
           dateTo: _toStr,
         ),
+        app.api!.getSlowStock(biz.businessId, branchId: app.selectedBranch?.branchId),
       ]);
       if (!mounted) return;
       final r = results[0];
       final cf = results[1];
+      final ss = results[2];
       if (r['success'] == true) {
         setState(() {
           _report = r;
           _cashflow = cf['success'] == true ? cf : null;
+          _slowStock = ss['success'] == true ? ss : null;
           _offline = r['offline'] == true;
         });
       } else {
@@ -240,7 +244,7 @@ class _ReportsScreenState extends State<ReportsScreen>
                     ? _errorView()
                     : TabBarView(
                         controller: _tab,
-                        children: [_pnlTab(), _salesTab(), _expensesTab(), _cashflowTab()],
+                        children: [_pnlTab(), _salesTab(), _expensesTab(), _cashflowTab(), _slowStockTab()],
                       ),
           ),
         ],
@@ -434,6 +438,7 @@ class _ReportsScreenState extends State<ReportsScreen>
                       Tab(height: 40, text: 'Mauzo'),
                       Tab(height: 40, text: 'Matumizi'),
                       Tab(height: 40, text: 'Mtiririko wa Pesa'),
+                      Tab(height: 40, text: 'Bidhaa Zinazokaa'),
                     ],
                   ),
                 ),
@@ -1082,6 +1087,117 @@ class _ReportsScreenState extends State<ReportsScreen>
       onRefresh: _load,
       color: AppColors.primary,
       child: _columns(left, right, bottomPad: 100 + maxPad),
+    );
+  }
+
+  // ── Slow/dead stock tab ──────────────────────────────────────────────────
+  Widget _slowStockTab() {
+    final ss = _slowStock;
+    final maxPad = MediaQuery.paddingOf(context).bottom;
+    if (ss == null) {
+      return RefreshIndicator(
+        onRefresh: _load,
+        color: AppColors.primary,
+        child: ListView(children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 60),
+            child: Column(children: [
+              Icon(Icons.inventory_2_outlined, size: 48, color: AppColors.textMuted),
+              const SizedBox(height: 10),
+              Text('Ripoti haipatikani kwa sasa', style: TextStyle(color: AppColors.textMuted)),
+            ]),
+          ),
+        ]),
+      );
+    }
+    final items = _l(ss['items']);
+    final totalTied = _n(ss['total_tied_capital']);
+    final deadCount = (ss['dead_count'] as num?)?.toInt() ?? 0;
+    final slowCount = (ss['slow_count'] as num?)?.toInt() ?? 0;
+    final days = (ss['days'] as num?)?.toInt() ?? 60;
+
+    final left = <Widget>[
+          Row(children: [
+            _kpi('Pesa Iliyofungwa', _money(totalTied), '${items.length} bidhaa', AppColors.chartRed),
+            const SizedBox(width: 10),
+            _kpi('Hazijauzwa', '$deadCount', 'siku $days zilizopita', AppColors.chartRed),
+          ]),
+          const SizedBox(height: 10),
+          Row(children: [
+            _kpi('Zinauzwa Pole', '$slowCount', 'zaidi ya ${ss['slow_threshold_days']} siku kumaliza', AppColors.chartOrange),
+          ]),
+          const SizedBox(height: 14),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(color: AppColors.chartBlue.withAlpha(20), borderRadius: BorderRadius.circular(10)),
+            child: Row(children: [
+              Icon(Icons.info_outline_rounded, size: 16, color: AppColors.chartBlue),
+              const SizedBox(width: 8),
+              Expanded(child: Text('Bidhaa hizi zina stock lakini hazijauzwa au zinauzwa pole sana — fikiria punguzo la bei au kuzirudisha kwa msambazaji.',
+                  style: TextStyle(color: AppColors.chartBlue, fontSize: 11))),
+            ]),
+          ),
+    ];
+    final right = <Widget>[
+          if (items.isEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 40),
+              child: Column(children: [
+                Icon(Icons.check_circle_outline_rounded, size: 48, color: AppColors.accent),
+                const SizedBox(height: 10),
+                Text('Hakuna bidhaa zinazokaa — stock yako inasonga vizuri!', textAlign: TextAlign.center,
+                    style: TextStyle(color: AppColors.textMuted)),
+              ]),
+            )
+          else
+            _card(
+              title: 'Bidhaa zinazokaa (kubwa zaidi kwanza)',
+              child: Column(children: [for (final it in items) _slowStockRow(it)]),
+            ),
+    ];
+    return RefreshIndicator(
+      onRefresh: _load,
+      color: AppColors.primary,
+      child: _columns(left, right, bottomPad: 100 + maxPad),
+    );
+  }
+
+  Widget _slowStockRow(Map<String, dynamic> it) {
+    final isDead = it['status'] == 'dead';
+    final daysSince = it['days_since_last_sale'];
+    final daysToClear = it['days_to_clear'];
+    final expiry = '${it['nearest_expiry'] ?? ''}';
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 7),
+      child: Row(children: [
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+          decoration: BoxDecoration(
+            color: (isDead ? AppColors.chartRed : AppColors.chartOrange).withAlpha(28),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Text(isDead ? 'Haijauzwa' : 'Pole',
+              style: TextStyle(color: isDead ? AppColors.chartRed : AppColors.chartOrange, fontSize: 9.5, fontWeight: FontWeight.w800)),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('${it['name']}', style: TextStyle(color: AppColors.textWhite, fontSize: 12.5, fontWeight: FontWeight.w600),
+                maxLines: 1, overflow: TextOverflow.ellipsis),
+            Text(
+              isDead
+                  ? (daysSince == null ? 'Haijawahi kuuzwa' : 'Siku $daysSince tangu iuzwe mara ya mwisho')
+                  : 'Siku ${daysToClear ?? '?'} kumaliza stock kwa kasi ya sasa',
+              style: TextStyle(color: AppColors.textMuted, fontSize: 10.5),
+            ),
+            if (expiry.isNotEmpty) Text('Muda wake unaisha: $expiry', style: TextStyle(color: AppColors.chartOrange, fontSize: 10)),
+          ]),
+        ),
+        Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+          Text(_money(_n(it['tied_capital'])), style: TextStyle(color: AppColors.textWhite, fontWeight: FontWeight.w700, fontSize: 12.5)),
+          Text('Stock: ${it['stock']} ${it['unit'] ?? ''}', style: TextStyle(color: AppColors.textMuted, fontSize: 10)),
+        ]),
+      ]),
     );
   }
 

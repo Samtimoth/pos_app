@@ -1062,6 +1062,17 @@ class OfflineApiService extends ApiService {
     );
   }
 
+  @override
+  Future<Map<String, dynamic>> getSlowStock(int businessId,
+      {int? branchId, int days = 60, int slowThresholdDays = 90}) {
+    final key = 'slowstock:$businessId:${branchId ?? 0}:$days:$slowThresholdDays';
+    return _cached(
+      key,
+      () => super.getSlowStock(businessId, branchId: branchId, days: days, slowThresholdDays: slowThresholdDays),
+      decode: (raw) => {...Map<String, dynamic>.from(raw as Map), 'offline': true},
+    );
+  }
+
   /// Expense rows live in kv cache under one key per business; offline
   /// adds/edits are applied to that list and queued.
   String _expKey(int biz) => 'expenses:$biz';
