@@ -8,6 +8,7 @@ import '../models/sale.dart';
 import '../providers/app_provider.dart';
 import '../theme/app_theme.dart';
 import '../l10n/app_l10n.dart';
+import 'sale_return_sheet.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Transaction Detail Bottom Sheet — items + payment history + actions
@@ -504,6 +505,19 @@ class _TransactionDetailSheetState extends State<TransactionDetailSheet>
         return;
       }
       await _doAction('record_payment', amount: amt, note: noteText);
+    }
+  }
+
+  Future<void> _openReturnSheet() async {
+    final l = L.of(context);
+    if (context.read<AppProvider>().user?.canReturnSales != true) {
+      _snack(l.isSw ? 'Huna ruhusa ya kurudisha bidhaa' : 'You cannot process returns', Colors.redAccent);
+      return;
+    }
+    final done = await SaleReturnSheet.show(context, sale: _sale, items: _items);
+    if (done == true) {
+      await _loadAll();
+      widget.onActionDone();
     }
   }
 
@@ -1279,6 +1293,19 @@ class _TransactionDetailSheetState extends State<TransactionDetailSheet>
           icon: Icons.account_balance_rounded,
           color: AppColors.chartBlue,
           onTap: () => _doAction('confirm_bank_transfer'),
+        ),
+      );
+    }
+
+    // ── Marejesho (returns): ruhusiwa hata kwa cashier, tofauti na void ──
+    if (context.read<AppProvider>().user?.canReturnSales == true &&
+        !_sale.isVoided && _items.isNotEmpty) {
+      btns.add(
+        _actionBtn(
+          label: l.returnSale,
+          icon: Icons.assignment_return_outlined,
+          color: AppColors.chartBlue,
+          onTap: _openReturnSheet,
         ),
       );
     }

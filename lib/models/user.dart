@@ -61,6 +61,10 @@ class User {
   /// Kuvunja/kufuta mauzo (void) — Manager na wakuu pekee
   bool get canVoidSales => isSuperAdmin || _managerPlus.contains(_r);
 
+  /// Kurudisha bidhaa (return/refund) — routine zaidi kuliko void, cashier anaweza
+  bool get canReturnSales =>
+      isSuperAdmin || _managerPlus.contains(_r) || _r == 'cashier';
+
   factory User.fromJson(Map<String, dynamic> json, String serverUrl) => User(
         userId:     int.parse((json['user_id'] ?? 0).toString()),
         username:   json['username']    as String? ?? '',

@@ -169,6 +169,7 @@ class L {
   String get collectCash       => t('Kusanya Pesa',          'Collect Cash');
   String get confirmTransfer   => t('Thibitisha Uhamisho',   'Confirm Transfer');
   String get voidSale          => t('Futa Mauzo',            'Void Sale');
+  String get returnSale        => t('Rudisha Bidhaa',        'Return Items');
   String get voidConfirmMsg    => t('Una uhakika unataka kufuta mauzo haya? Hifadhi itarudishwa.',
                                      'Are you sure you want to void this sale? Stock will be restored.');
   String get saleDetail        => t('Maelezo ya Mauzo',      'Sale Details');

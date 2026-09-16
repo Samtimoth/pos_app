@@ -465,6 +465,43 @@ class ApiService {
     return _decode(res) as Map<String, dynamic>;
   }
 
+  // ── Sale Returns / Refunds (marejesho ya bidhaa) ───────────────────
+  /// [items]: [{item_id, product_id, quantity}] — partial return supported.
+  /// Requires network (no offline queue: returns depend on the original
+  /// sale already being synced server-side).
+  Future<Map<String, dynamic>> createSaleReturn({
+    required int saleId,
+    required List<Map<String, dynamic>> items,
+    String reason = '',
+    String? clientOpId,
+  }) async {
+    final res = await _client
+        .post(
+          Uri.parse('$baseUrl/sale_returns.php'),
+          headers: _headers,
+          body: jsonEncode({
+            'action': 'create',
+            'sale_id': saleId,
+            'items': items,
+            'reason': reason,
+            'client_op_id': ?clientOpId,
+          }),
+        )
+        .timeout(const Duration(seconds: 20));
+    return _decode(res) as Map<String, dynamic>;
+  }
+
+  Future<List<dynamic>> getSaleReturns(int saleId) async {
+    try {
+      final uri = Uri.parse('$baseUrl/sale_returns.php')
+          .replace(queryParameters: {'action': 'list', 'sale_id': saleId.toString()});
+      final res = await _client.get(uri).timeout(const Duration(seconds: 15));
+      final body = _decode(res) as Map<String, dynamic>;
+      if (body['success'] == true) return body['returns'] as List? ?? [];
+    } catch (_) {}
+    return [];
+  }
+
   // ── Category CRUD ─────────────────────────────────────────────────
   Future<Map<String, dynamic>> manageCategory(int businessId, String action,
       {int? id, String? name, String? clientOpId}) async {
