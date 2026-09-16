@@ -15,7 +15,9 @@ import '../providers/cart_provider.dart';
 import '../theme/app_theme.dart';
 import '../l10n/app_l10n.dart';
 import '../utils/cat_style.dart';
+import '../widgets/discount_field.dart';
 import '../widgets/first_run_tutorial.dart';
+import '../widgets/manager_pin_dialog.dart';
 import '../widgets/split_payment_field.dart';
 import 'customers_screen.dart';
 
@@ -1311,11 +1313,13 @@ class _QtyStepper extends StatelessWidget {
 class _TotalCard extends StatelessWidget {
   final NumberFormat fmt;
   final double total;
-  const _TotalCard({required this.fmt, required this.total});
+  final double discount;
+  const _TotalCard({required this.fmt, required this.total, this.discount = 0});
 
   @override
   Widget build(BuildContext context) {
     final l = L.of(context);
+    final grandTotal = (total - discount).clamp(0, total);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: BoxDecoration(
@@ -1325,7 +1329,24 @@ class _TotalCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: AppColors.primary.withAlpha(90)),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (discount > 0) ...[
+            Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+              Text('Jumla ndogo', style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
+              Text('TZS ${fmt.format(total)}', style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
+            ]),
+            const SizedBox(height: 3),
+            Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+              Text('Punguzo', style: TextStyle(color: Colors.orangeAccent, fontSize: 12, fontWeight: FontWeight.w600)),
+              Text('- TZS ${fmt.format(discount)}', style: const TextStyle(color: Colors.orangeAccent, fontSize: 12, fontWeight: FontWeight.w600)),
+            ]),
+            const SizedBox(height: 6),
+            Divider(color: AppColors.border, height: 1),
+            const SizedBox(height: 6),
+          ],
+          Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           Row(
@@ -1354,12 +1375,14 @@ class _TotalCard extends StatelessWidget {
             ],
           ),
           Text(
-            'TZS ${fmt.format(total)}',
+            'TZS ${fmt.format(grandTotal)}',
             style: const TextStyle(
               color: AppColors.primary,
               fontWeight: FontWeight.bold,
               fontSize: 18,
             ),
+          ),
+        ],
           ),
         ],
       ),
@@ -1554,6 +1577,7 @@ class _CartPanelState extends State<_CartPanel> {
   String _payType = 'cash';
   bool _processing = false;
   SplitPaymentResult _splitPay = SplitPaymentResult.off;
+  double _discount = 0;
 
   // Set when "Chagua mteja" is used; only trusted at checkout if the phone
   // field still matches what was picked (guards against a stale id if the
@@ -1640,6 +1664,18 @@ class _CartPanelState extends State<_CartPanel> {
 
     if (app.api == null || app.selectedBusiness == null) return;
 
+    // ── Punguzo kubwa (>10% ya jumla) linahitaji PIN ya meneja isipokuwa
+    // mtumaji mwenyewe ni meneja/mmiliki tayari (ona helpers/manager_pin.php).
+    String? discountPin;
+    if (_discount > 0 && cart.total > 0 && (_discount / cart.total) * 100 > 10 &&
+        app.user?.isManagerTier != true) {
+      discountPin = await ManagerPinDialog.show(context,
+          reasonLabel: 'Punguzo hili linazidi 10% ya jumla — meneja aweke PIN yake.');
+      if (discountPin == null) return; // cashier cancelled
+    }
+
+    final grandTotal = (cart.total - _discount).clamp(0, cart.total);
+
     setState(() => _processing = true);
     try {
       final phone = _phoneCtrl.text.trim();
@@ -1655,6 +1691,8 @@ class _CartPanelState extends State<_CartPanel> {
         customerPhone: phone,
         customerId: confirmedCustomerId,
         payments: (_payType == 'cash' && _splitPay.enabled) ? _splitPay.payments : null,
+        overallDiscount: _discount > 0 ? _discount : null,
+        managerPin: discountPin,
       );
       if (!mounted) return;
       if (res['success'] == true) {
@@ -1670,10 +1708,11 @@ class _CartPanelState extends State<_CartPanel> {
           customerPhone: _phoneCtrl.text.trim(),
           customerType: _customerMode,
           paymentType: _payType,
-          total: cart.total,
-          amountPaid: _amountPaid() ?? cart.total,
+          total: grandTotal.toDouble(),
+          amountPaid: _amountPaid() ?? grandTotal.toDouble(),
           changeAmount: (res['change_amount'] as num?)?.toDouble() ??
               (_splitPay.enabled ? _splitPay.changeAmount : null),
+          discount: (res['discount_amount'] as num?)?.toDouble() ?? _discount,
           items: cart.items
               .map(
                 (i) => _PosReceiptItem(
@@ -1706,6 +1745,7 @@ class _CartPanelState extends State<_CartPanel> {
           _pickedCustomerId = null;
           _pickedCustomerPhone = null;
           _splitPay = SplitPaymentResult.off;
+          _discount = 0;
         });
         _snack(
           res['offline'] == true
@@ -1905,7 +1945,11 @@ class _CartPanelState extends State<_CartPanel> {
                 padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
                 child: Column(
                   children: [
-                    _TotalCard(fmt: widget.fmt, total: cart.total),
+                    _TotalCard(fmt: widget.fmt, total: cart.total, discount: _discount),
+                    DiscountField(
+                      subtotal: cart.total,
+                      onChanged: (r) => setState(() => _discount = r.amount),
+                    ),
                     const SizedBox(height: 12),
                     _CustomerModeSelector(
                       value: _customerMode,
@@ -2000,7 +2044,7 @@ class _CartPanelState extends State<_CartPanel> {
                     ),
                     if (_payType == 'cash')
                       SplitPaymentField(
-                        total: cart.total,
+                        total: (cart.total - _discount).clamp(0, cart.total),
                         onChanged: (r) => setState(() => _splitPay = r),
                       ),
                     if (_payType != 'cash') ...[
@@ -2092,6 +2136,7 @@ class _CartSheetState extends State<_CartSheet> {
   String _payType = 'cash';
   bool _processing = false;
   SplitPaymentResult _splitPay = SplitPaymentResult.off;
+  double _discount = 0;
 
   int? _pickedCustomerId;
   String? _pickedCustomerPhone;
@@ -2173,6 +2218,19 @@ class _CartSheetState extends State<_CartSheet> {
     }
 
     if (app.api == null || app.selectedBusiness == null) return;
+
+    // ── Punguzo kubwa (>10% ya jumla) linahitaji PIN ya meneja isipokuwa
+    // mtumaji mwenyewe ni meneja/mmiliki tayari (ona helpers/manager_pin.php).
+    String? discountPin;
+    if (_discount > 0 && cart.total > 0 && (_discount / cart.total) * 100 > 10 &&
+        app.user?.isManagerTier != true) {
+      discountPin = await ManagerPinDialog.show(context,
+          reasonLabel: 'Punguzo hili linazidi 10% ya jumla — meneja aweke PIN yake.');
+      if (discountPin == null) return; // cashier cancelled
+    }
+
+    final grandTotal = (cart.total - _discount).clamp(0, cart.total);
+
     setState(() => _processing = true);
     try {
       final phone = _phoneCtrl.text.trim();
@@ -2188,6 +2246,8 @@ class _CartSheetState extends State<_CartSheet> {
         customerPhone: phone,
         customerId: confirmedCustomerId,
         payments: (_payType == 'cash' && _splitPay.enabled) ? _splitPay.payments : null,
+        overallDiscount: _discount > 0 ? _discount : null,
+        managerPin: discountPin,
       );
       if (!mounted) return;
       if (res['success'] == true) {
@@ -2203,10 +2263,11 @@ class _CartSheetState extends State<_CartSheet> {
           customerPhone: _phoneCtrl.text.trim(),
           customerType: _customerMode,
           paymentType: _payType,
-          total: cart.total,
-          amountPaid: _amountPaid() ?? cart.total,
+          total: grandTotal.toDouble(),
+          amountPaid: _amountPaid() ?? grandTotal.toDouble(),
           changeAmount: (res['change_amount'] as num?)?.toDouble() ??
               (_splitPay.enabled ? _splitPay.changeAmount : null),
+          discount: (res['discount_amount'] as num?)?.toDouble() ?? _discount,
           items: cart.items
               .map(
                 (i) => _PosReceiptItem(
@@ -2393,6 +2454,18 @@ class _CartSheetState extends State<_CartSheet> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    DiscountField(
+                      subtotal: cart.total,
+                      onChanged: (r) => setState(() => _discount = r.amount),
+                    ),
+                    if (_discount > 0)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4, bottom: 4),
+                        child: Text(
+                          'Jumla baada ya punguzo: TZS ${widget.fmt.format((cart.total - _discount).clamp(0, cart.total))}',
+                          style: TextStyle(color: AppColors.primary, fontWeight: FontWeight.w700, fontSize: 12.5),
+                        ),
+                      ),
                     _sectionLabel(l.payType),
                     const SizedBox(height: 6),
                     SizedBox(
@@ -2410,7 +2483,7 @@ class _CartSheetState extends State<_CartSheet> {
                     ),
                     if (_payType == 'cash')
                       SplitPaymentField(
-                        total: cart.total,
+                        total: (cart.total - _discount).clamp(0, cart.total),
                         onChanged: (r) => setState(() => _splitPay = r),
                       ),
                     const SizedBox(height: 10),
@@ -2887,6 +2960,7 @@ class _PosReceiptData {
   final double total;
   final double amountPaid;
   final double? changeOverride;
+  final double discount;
   final List<_PosReceiptItem> items;
 
   const _PosReceiptData({
@@ -2901,6 +2975,7 @@ class _PosReceiptData {
     required this.total,
     required this.amountPaid,
     this.changeOverride,
+    this.discount = 0,
     required this.items,
   });
 
@@ -2919,6 +2994,7 @@ class _PosReceiptData {
     required double total,
     required double amountPaid,
     double? changeAmount,
+    double discount = 0,
     required List<_PosReceiptItem> items,
   }) {
     final data = response['data'];
@@ -2946,6 +3022,7 @@ class _PosReceiptData {
       total: total,
       amountPaid: amountPaid,
       changeOverride: changeAmount != null && changeAmount > 0 ? changeAmount : null,
+      discount: discount,
       items: items,
     );
   }
@@ -3105,6 +3182,8 @@ class _PosReceiptSheet extends StatelessWidget {
                             ),
                           ),
                           const Divider(height: 24),
+                          if (receipt.discount > 0)
+                            _money('Discount', receipt.discount, color: Colors.orange),
                           _money('Total', receipt.total, bold: true),
                           _money('Paid', receipt.amountPaid),
                           if (receipt.balance > 0)
@@ -3270,6 +3349,8 @@ class _PosReceiptSheet extends StatelessWidget {
               ),
             ),
             pw.Divider(),
+            if (receipt.discount > 0)
+              _pdfMoney('Discount', receipt.discount, fmt),
             _pdfMoney('Total', receipt.total, fmt, bold: true),
             _pdfMoney('Paid', receipt.amountPaid, fmt),
             if (receipt.balance > 0)

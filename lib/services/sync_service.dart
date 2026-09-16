@@ -162,6 +162,8 @@ class SyncService extends ChangeNotifier {
           payments: rawPayments
               ?.map((e) => Map<String, dynamic>.from(e as Map))
               .toList(),
+          overallDiscount: (p['overallDiscount'] as num?)?.toDouble(),
+          managerPin: p['managerPin'] as String?,
         );
         if (res['success'] == true) {
           final data = res['data'];

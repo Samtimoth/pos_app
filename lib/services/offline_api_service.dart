@@ -706,6 +706,8 @@ class OfflineApiService extends ApiService {
     String customerPhone = '',
     int? customerId,
     List<Map<String, dynamic>>? payments,
+    double? overallDiscount,
+    String? managerPin,
   }) {
     final opId = clientOpId ?? _uuid.v4();
     final when = createdAt ?? _now();
@@ -717,6 +719,7 @@ class OfflineApiService extends ApiService {
           customerName: customerName, transactionType: transactionType,
           items: items, amountPaid: amountPaid, clientOpId: opId, createdAt: whenUtc,
           customerPhone: customerPhone, customerId: customerId, payments: payments,
+          overallDiscount: overallDiscount, managerPin: managerPin,
         );
         if (res['success'] == true && _deductsStock(transactionType)) {
           // Keep local stock in step so the POS grid is right immediately.
@@ -731,9 +734,11 @@ class OfflineApiService extends ApiService {
       () async {
         final tempId = newTempId();
         final saleNo = 'OFF-${when.substring(2, 10).replaceAll('-', '')}-${(-tempId) % 10000}';
-        final total = items.fold<double>(
+        final subtotal = items.fold<double>(
             0, (s, i) => s + (double.tryParse('${i['qty']}') ?? 0) *
                 (double.tryParse('${i['unit_price']}') ?? 0));
+        final discount = (overallDiscount ?? 0).clamp(0, subtotal).toDouble();
+        final total = subtotal - discount;
         final fin = _paymentFigures(transactionType, total, amountPaid);
         final phone = customerPhone.isNotEmpty
             ? customerPhone
@@ -747,8 +752,8 @@ class OfflineApiService extends ApiService {
           'branch_id': branchId,
           'customer_name': name,
           'customer_phone': phone,
-          'subtotal_amount': total,
-          'discount_amount': 0,
+          'subtotal_amount': subtotal,
+          'discount_amount': discount,
           'total_amount': total,
           'paid_amount': fin.paid,
           'balance_amount': fin.balance,
@@ -791,6 +796,8 @@ class OfflineApiService extends ApiService {
           'items': items, 'amountPaid': amountPaid, 'createdAt': whenUtc,
           'customerPhone': phone, 'customerId': customerId,
           if (payments != null && payments.isNotEmpty) 'payments': payments,
+          if (discount > 0) 'overallDiscount': discount,
+          if (managerPin != null && managerPin.isNotEmpty) 'managerPin': managerPin,
         }, opId: opId);
         var change = 0.0;
         if (payments != null) {

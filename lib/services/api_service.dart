@@ -187,6 +187,8 @@ class ApiService {
     String customerPhone = '',
     int? customerId,
     List<Map<String, dynamic>>? payments,
+    double? overallDiscount,
+    String? managerPin,
   }) async {
     final res = await _client
         .post(
@@ -205,6 +207,8 @@ class ApiService {
             'client_op_id': ?clientOpId,
             'created_at': ?createdAt,
             if (payments != null && payments.isNotEmpty) 'payments': payments,
+            if (overallDiscount != null && overallDiscount > 0) 'overall_discount': overallDiscount,
+            if (managerPin != null && managerPin.isNotEmpty) 'manager_pin': managerPin,
           }),
         )
         .timeout(const Duration(seconds: 30));
