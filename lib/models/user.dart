@@ -21,6 +21,46 @@ class User {
 
   bool get isSuperAdmin => globalRole.toLowerCase() == 'superadmin';
 
+  // ── Role helpers (Hatua 1) — viwango vya ruhusa kwenye UI ──
+  static const _managerPlus = {'owner', 'admin', 'superadmin', 'manager'};
+
+  String get _r => role.toLowerCase();
+
+  /// Kusoma data (mauzo, bidhaa, ripoti)
+  bool get canView => true;
+
+  /// Kuuza / kufanya mauzo mapya
+  bool get canSell =>
+      isSuperAdmin || _managerPlus.contains(_r) || _r == 'cashier' || _r == 'supporter';
+
+  /// Kuongeza/kuhariri bidhaa na stock
+  bool get canManageProducts =>
+      isSuperAdmin || _managerPlus.contains(_r) || _r == 'stockist';
+
+  /// Kufuta bidhaa
+  bool get canDeleteProducts => isSuperAdmin || _r == 'owner' || _r == 'admin';
+
+  /// Kuona bei ya kununua na faida
+  bool get canSeeCosts =>
+      isSuperAdmin || _managerPlus.contains(_r) || _r == 'accountant';
+
+  /// Kuhariri matumizi (expenses)
+  bool get canManageExpenses =>
+      isSuperAdmin || _managerPlus.contains(_r) || _r == 'accountant';
+
+  /// Kusimamia wafanyakazi
+  bool get canManageStaff => isSuperAdmin || _r == 'owner' || _r == 'admin';
+
+  /// Kuhariri taarifa za biashara
+  bool get canEditBusiness => isSuperAdmin || _r == 'owner' || _r == 'admin';
+
+  /// Kuona faida na ripoti za P&L
+  bool get canSeeReports =>
+      isSuperAdmin || _managerPlus.contains(_r) || _r == 'accountant';
+
+  /// Kuvunja/kufuta mauzo (void) — Manager na wakuu pekee
+  bool get canVoidSales => isSuperAdmin || _managerPlus.contains(_r);
+
   factory User.fromJson(Map<String, dynamic> json, String serverUrl) => User(
         userId:     int.parse((json['user_id'] ?? 0).toString()),
         username:   json['username']    as String? ?? '',

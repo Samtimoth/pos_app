@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import '../models/user.dart';
 import '../models/business.dart';
 import '../services/api_service.dart';
+import '../services/offline_api_service.dart';
+import '../services/sync_service.dart';
 import '../services/storage_service.dart';
 import '../l10n/app_l10n.dart';
 
@@ -48,6 +50,8 @@ class AppProvider extends ChangeNotifier {
     final serverUrl = StorageService.getString('server_url');
     final userId = StorageService.getInt('user_id');
     final username = StorageService.getString('username');
+    // Rejesha token ya auth (Hatua 1) ili Bearer itumike kwenye kila ombi
+    ApiService.loadSavedToken();
     // Restore language
     final savedLang = StorageService.getString('app_lang');
     _lang = savedLang == 'en' ? AppLang.en : AppLang.sw;
@@ -65,7 +69,8 @@ class AppProvider extends ChangeNotifier {
       branchId: StorageService.getInt('branch_id'),
       serverUrl: serverUrl,
     );
-    _api = ApiService(serverUrl);
+    _api = OfflineApiService(serverUrl);
+    SyncService.instance.configure(serverUrl);
 
     // Restore selected business/branch if saved
     final bizId = StorageService.getInt('selected_business_id');
@@ -99,7 +104,8 @@ class AppProvider extends ChangeNotifier {
   // ── Set user after login ───────────────────────────────
   Future<void> setUser(User user) async {
     _user = user;
-    _api = ApiService(user.serverUrl);
+    _api = OfflineApiService(user.serverUrl);
+    SyncService.instance.configure(user.serverUrl);
 
     await StorageService.saveString('server_url', user.serverUrl);
     await StorageService.saveInt('user_id', user.userId);
@@ -177,6 +183,8 @@ class AppProvider extends ChangeNotifier {
     _selectedBusiness = null;
     _selectedBranch = null;
     _businesses = [];
+    SyncService.instance.configure(null);
+    ApiService.setToken(null); // futa token
     await StorageService.clearSession();
     notifyListeners();
   }

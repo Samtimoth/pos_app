@@ -1206,7 +1206,7 @@ class _SubscriptionActionSheetState extends State<_SubscriptionActionSheet> {
   late int? _planId = widget.plans.isNotEmpty
       ? widget.plans.first['plan_id'] as int
       : null;
-  final _daysCtrl = TextEditingController(text: '30');
+  final _daysCtrl = TextEditingController(text: '90');
   bool _saving = false;
 
   @override

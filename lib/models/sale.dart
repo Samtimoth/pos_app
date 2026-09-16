@@ -49,6 +49,9 @@ class Sale {
   final String notes;
   final String createdAt;
   final int itemCount;
+  /// synced | pending | failed  (pending/failed = created or edited offline)
+  final String syncStatus;
+  final String syncError;
 
   const Sale({
     required this.saleId,
@@ -66,6 +69,8 @@ class Sale {
     required this.notes,
     required this.createdAt,
     required this.itemCount,
+    this.syncStatus = 'synced',
+    this.syncError = '',
   });
 
   factory Sale.fromJson(Map<String, dynamic> json) => Sale(
@@ -78,13 +83,26 @@ class Sale {
         totalAmount:    _d(json['total_amount']    ?? json['subtotal']),
         paidAmount:     _d(json['paid_amount']),
         balanceAmount:  _d(json['balance_amount']  ?? json['due_amount']),
-        saleType:       _s(json['sale_type']),
-        paymentStatus:  _s(json['payment_status']  ?? json['status']),
+        saleType:       _norm(_s(json['sale_type'])),
+        paymentStatus:  _norm(_s(json['payment_status']  ?? json['status'])),
         paymentMethod:  _s(json['payment_method']),
         notes:          _s(json['notes']),
         createdAt:      _s(json['created_at']),
         itemCount:      _i(json['item_count']),
+        syncStatus:     _s(json['sync_status'] ?? 'synced'),
+        syncError:      _s(json['sync_error']),
       );
+
+  bool get isOfflinePending => syncStatus == 'pending';
+  bool get isSyncFailed     => syncStatus == 'failed';
+  bool get isSynced         => syncStatus == 'synced';
+
+  /// Older rows carry "Paid" / "slow payment"; normalise to the app's
+  /// lowercase snake_case vocabulary.
+  static String _norm(String v) {
+    final n = v.toLowerCase().replaceAll(' ', '_');
+    return n == 'slow_payment' ? 'partial' : n;
+  }
 
   static int    _i(dynamic v) => int.tryParse('$v')    ?? 0;
   static double _d(dynamic v) => double.tryParse('$v') ?? 0.0;

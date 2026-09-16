@@ -121,20 +121,20 @@ class _BusinessSelectScreenState extends State<BusinessSelectScreen>
           TutorialStep(
             icon: Icons.storefront_rounded,
             title: 'Chagua biashara',
-            body:
-                'Gusa biashara unayotaka kuendesha. Kama biashara ina matawi mengi, chagua tawi kwanza.',
+            body: 'Gusa biashara unayotaka kuendesha. Ikiwa na matawi mengi, chagua tawi kwanza.',
+            targetId: 'biz_first',
           ),
           TutorialStep(
             icon: Icons.add_business_rounded,
             title: 'Ongeza biashara',
-            body:
-                'Kitufe cha chini kinakuwezesha kuongeza biashara mpya kwenye akaunti hii.',
+            body: 'Kitufe hiki kinaongeza biashara mpya kwenye akaunti hii hii.',
+            targetId: 'biz_add',
           ),
           TutorialStep(
             icon: Icons.logout_rounded,
-            title: 'Toka kwa usalama',
-            body:
-                'Ukibonyeza logout app itafuta session na kukurudisha login bila kubakiza screens za zamani.',
+            title: 'Toka',
+            body: 'Logout inafuta session na kukurudisha kwenye login.',
+            targetId: 'biz_logout',
           ),
         ],
       );
@@ -186,7 +186,9 @@ class _BusinessSelectScreenState extends State<BusinessSelectScreen>
           ],
         ),
       ),
-      floatingActionButton: FloatingActionButton.extended(
+      floatingActionButton: TutorialTarget(
+        id: 'biz_add',
+        child: FloatingActionButton.extended(
         onPressed: _showAddBusiness,
         backgroundColor: AppColors.primary,
         icon: const Icon(Icons.add_business_rounded, color: Colors.white),
@@ -194,6 +196,7 @@ class _BusinessSelectScreenState extends State<BusinessSelectScreen>
           'Ongeza Biashara',
           style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
         ),
+      ),
       ),
     );
   }
@@ -257,7 +260,9 @@ class _BusinessSelectScreenState extends State<BusinessSelectScreen>
               icon: const Icon(Icons.refresh_rounded, color: Colors.white),
               onPressed: _loadBusinesses,
             ),
-            IconButton(
+            TutorialTarget(
+              id: 'biz_logout',
+              child: IconButton(
               icon: const Icon(Icons.logout_rounded, color: Colors.white),
               tooltip: 'Toka',
               onPressed: () async {
@@ -270,6 +275,7 @@ class _BusinessSelectScreenState extends State<BusinessSelectScreen>
                   (_) => false,
                 );
               },
+            ),
             ),
           ],
         ),
@@ -327,7 +333,9 @@ class _BusinessSelectScreenState extends State<BusinessSelectScreen>
             child: Transform.scale(scale: 0.94 + (0.06 * v), child: child),
           ),
         ),
-        child: _BusinessCard(
+        child: TutorialTarget(
+          id: i == 0 ? 'biz_first' : 'biz_$i',
+          child: _BusinessCard(
           business: biz,
           selectedBranch: _selectedBranch[biz.businessId],
           onBranchChanged: (b) =>
@@ -339,6 +347,7 @@ class _BusinessSelectScreenState extends State<BusinessSelectScreen>
             });
             context.read<AppProvider>().updateLocalBusiness(updated);
           },
+        ),
         ),
       );
     },

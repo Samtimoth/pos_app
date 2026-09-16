@@ -4,6 +4,7 @@ import '../models/business.dart';
 import '../providers/app_provider.dart';
 import '../providers/theme_provider.dart';
 import '../theme/app_theme.dart';
+import '../widgets/first_run_tutorial.dart';
 import '../l10n/app_l10n.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -21,13 +22,28 @@ class _ManageScreenState extends State<ManageScreen>
     with SingleTickerProviderStateMixin {
   late TabController _tab;
 
+  // ── Hatua 1: tabs zinaonekana kwa role ──
+  // Categories/Units: canManageProducts · Staff: canManageStaff
+  late final List<String> _visible;
+
   @override
   void initState() {
     super.initState();
+    final user = context.read<AppProvider>().user;
+    _visible = [
+      if (user == null || user.canManageProducts) ...['categories', 'units'],
+      if (user == null || user.canManageStaff) 'staff',
+    ];
+    var initIdx = widget.initialTab;
+    if (_visible.isEmpty) {
+      initIdx = 0;
+    } else if (initIdx >= _visible.length) {
+      initIdx = _visible.length - 1;
+    }
     _tab = TabController(
-      length: 3,
+      length: _visible.length,
       vsync: this,
-      initialIndex: widget.initialTab,
+      initialIndex: initIdx,
     );
   }
 
@@ -41,7 +57,29 @@ class _ManageScreenState extends State<ManageScreen>
   Widget build(BuildContext context) {
     final l = L.of(context);
 
-    Widget buildTabBar({required bool onGradient}) => Container(
+    // ── Hatua 1: hakuna ruhusa yoyote → empty state (si crash) ──
+    if (_visible.isEmpty) {
+      return Scaffold(
+        backgroundColor: AppColors.bg,
+        body: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.lock_outline_rounded, size: 48, color: AppColors.textMuted),
+              const SizedBox(height: 12),
+              Text(
+                l.isSw ? 'Huna ruhusa ya sehemu hii' : 'You do not have permission for this section',
+                style: TextStyle(color: AppColors.textMuted),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    Widget buildTabBar({required bool onGradient}) => TutorialTarget(
+      id: 'manage_tabs',
+      child: Container(
       margin: const EdgeInsets.fromLTRB(16, 0, 16, 0),
       decoration: BoxDecoration(
         color: onGradient ? Colors.white.withAlpha(25) : AppColors.bg,
@@ -62,22 +100,28 @@ class _ManageScreenState extends State<ManageScreen>
         indicatorPadding: const EdgeInsets.all(3),
         labelColor: onGradient ? AppColors.primary : Colors.white,
         unselectedLabelColor: onGradient ? Colors.white70 : AppColors.textMuted,
-        labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+        labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
+        labelPadding: const EdgeInsets.symmetric(horizontal: 4),
         tabs: [
-          Tab(
-            icon: const Icon(Icons.category_rounded, size: 16),
-            text: l.categoriesTab,
-          ),
-          Tab(
-            icon: const Icon(Icons.straighten_rounded, size: 16),
-            text: l.unitsTab,
-          ),
-          Tab(
-            icon: const Icon(Icons.people_alt_rounded, size: 16),
-            text: l.staffTab,
-          ),
+          for (final t in _visible)
+            if (t == 'categories')
+              Tab(
+                icon: const Icon(Icons.category_rounded, size: 16),
+                text: l.categoriesTab,
+              )
+            else if (t == 'units')
+              Tab(
+                icon: const Icon(Icons.straighten_rounded, size: 16),
+                text: l.unitsTab,
+              )
+            else
+              Tab(
+                icon: const Icon(Icons.people_alt_rounded, size: 16),
+                text: l.staffTab,
+              ),
         ],
       ),
+    ),
     );
     final tabBar = buildTabBar(onGradient: false);
 
@@ -100,9 +144,13 @@ class _ManageScreenState extends State<ManageScreen>
             child: TabBarView(
               controller: _tab,
               children: [
-                _CategoryTab(desktop: true),
-                _UnitTab(desktop: true),
-                _StaffTab(desktop: true),
+                for (final t in _visible)
+                  if (t == 'categories')
+                    _CategoryTab(desktop: true)
+                  else if (t == 'units')
+                    _UnitTab(desktop: true)
+                  else
+                    _StaffTab(desktop: true),
               ],
             ),
           ),
@@ -135,26 +183,32 @@ class _ManageScreenState extends State<ManageScreen>
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Row(
-                        children: [
-                          IconButton(
-                            onPressed: () => Navigator.of(context).maybePop(),
-                            icon: const Icon(
-                              Icons.arrow_back_rounded,
-                              color: Colors.white,
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(4, 6, 0, 0),
+                        child: Row(
+                          children: [
+                            if (Navigator.of(context).canPop())
+                              IconButton(
+                                onPressed: () => Navigator.of(context).maybePop(),
+                                icon: const Icon(
+                                  Icons.arrow_back_rounded,
+                                  color: Colors.white,
+                                ),
+                              )
+                            else
+                              const SizedBox(width: 12),
+                            Text(
+                              l.manage,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 20,
+                                fontWeight: FontWeight.w800,
+                              ),
                             ),
-                          ),
-                          Text(
-                            l.manage,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 17,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
-                      const SizedBox(height: 14),
+                      const SizedBox(height: 12),
                       Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 16),
                         child: buildTabBar(onGradient: true),
@@ -172,9 +226,13 @@ class _ManageScreenState extends State<ManageScreen>
               child: TabBarView(
                 controller: _tab,
                 children: [
-                  _CategoryTab(desktop: false),
-                  _UnitTab(desktop: false),
-                  _StaffTab(desktop: false),
+                  for (final t in _visible)
+                    if (t == 'categories')
+                      _CategoryTab(desktop: false)
+                    else if (t == 'units')
+                      _UnitTab(desktop: false)
+                    else
+                      _StaffTab(desktop: false),
                 ],
               ),
             ),
@@ -211,8 +269,10 @@ class _ThemePanel extends StatelessWidget {
           ),
         ],
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          Row(children: [
           // Animated icon
           AnimatedSwitcher(
             duration: const Duration(milliseconds: 350),
@@ -267,28 +327,28 @@ class _ThemePanel extends StatelessWidget {
               ],
             ),
           ),
-          const SizedBox(width: 10),
-          // 3 option chips
+          ]),
+          const SizedBox(height: 10),
+          // 3 option chips – full width row
           Row(
-            mainAxisSize: MainAxisSize.min,
             children: [
-              _ThemeChip(
+              Expanded(child: _ThemeChip(
                 pref: 'auto',
                 icon: Icons.schedule_rounded,
                 label: 'Auto',
-              ),
+              )),
               const SizedBox(width: 6),
-              _ThemeChip(
+              Expanded(child: _ThemeChip(
                 pref: 'dark',
                 icon: Icons.dark_mode_rounded,
                 label: 'Usiku',
-              ),
+              )),
               const SizedBox(width: 6),
-              _ThemeChip(
+              Expanded(child: _ThemeChip(
                 pref: 'light',
                 icon: Icons.light_mode_rounded,
                 label: 'Mchana',
-              ),
+              )),
             ],
           ),
         ],
@@ -337,6 +397,7 @@ class _ThemeChip extends StatelessWidget {
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Icon(
               icon,

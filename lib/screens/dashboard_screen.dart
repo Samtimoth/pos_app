@@ -8,6 +8,11 @@ import '../models/business.dart';
 import '../models/sale.dart';
 import '../providers/app_provider.dart';
 import '../providers/cart_provider.dart';
+import '../services/sync_service.dart';
+import '../widgets/sync_status_bar.dart';
+import 'reports_screen.dart';
+import 'customers_screen.dart';
+import 'stock_ledger_screen.dart';
 import '../providers/theme_provider.dart';
 import '../theme/app_theme.dart';
 import '../l10n/app_l10n.dart';
@@ -41,10 +46,8 @@ class _DashboardScreenState extends State<DashboardScreen>
   final _numFmt = NumberFormat('#,###', 'en_US');
   late AnimationController _animCtrl;
   late Animation<double> _fadeAnim;
-  late DateTime _now;
-  Timer? _clockTimer;
   bool _balanceVisible = true;
-  final int _productsRefreshKey = 0;
+  int _productsRefreshKey = 0;
   int? _lastTutorialNav;
 
   @override
@@ -55,16 +58,21 @@ class _DashboardScreenState extends State<DashboardScreen>
       duration: const Duration(milliseconds: 600),
     );
     _fadeAnim = CurvedAnimation(parent: _animCtrl, curve: Curves.easeOut);
-    _now = DateTime.now();
-    _clockTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (mounted) setState(() => _now = DateTime.now());
-    });
+    _loadData();
+    // Reload once queued offline work reaches the server (temp ids → real).
+    SyncService.instance.addChangeListener(_onSynced);
+    SyncService.instance.syncNow();
+  }
+
+  void _onSynced() {
+    if (!mounted) return;
+    setState(() => _productsRefreshKey++);
     _loadData();
   }
 
   @override
   void dispose() {
-    _clockTimer?.cancel();
+    SyncService.instance.removeChangeListener(_onSynced);
     _animCtrl.dispose();
     super.dispose();
   }
@@ -128,6 +136,26 @@ class _DashboardScreenState extends State<DashboardScreen>
       ),
     );
     if (ok == true && mounted) {
+      final sync = SyncService.instance;
+      await sync.refreshCounts();
+      if (sync.hasWork && mounted) {
+        final force = await showDialog<bool>(
+          context: context,
+          builder: (_) => _FintechDialog(
+            icon: Icons.cloud_off_rounded,
+            iconColor: Colors.orange,
+            title: l.isSw ? 'Data haijatumwa' : 'Unsynced data',
+            body: l.isSw
+                ? 'Kuna ${sync.pending + sync.failed} operations (mauzo n.k.) ambazo bado hazijafika server. Zitabaki kwenye kifaa na kutumwa ukiingia tena ukiwa online. Endelea kutoka?'
+                : 'There are ${sync.pending + sync.failed} operations (sales etc.) not yet on the server. They stay on this device and sync next time you log in online. Log out anyway?',
+            confirmLabel: l.yes,
+            cancelLabel: l.no,
+            confirmColor: Colors.orange,
+          ),
+        );
+        if (force != true) return;
+      }
+      if (!mounted) return;
       await app.logout();
       if (!mounted) return;
       context.read<CartProvider>().clear();
@@ -158,88 +186,120 @@ class _DashboardScreenState extends State<DashboardScreen>
     });
   }
 
+  /// Coach-mark steps per tab. Each `targetId` names a [TutorialTarget]
+  /// somewhere on that screen, so the explanation points at the real thing.
   List<TutorialStep> _tutorialStepsForNav(int nav) {
     final l = L.of(context);
     switch (nav) {
       case 1:
-        return [
+        return const [
           TutorialStep(
-            icon: Icons.point_of_sale_rounded,
-            title: l.pos.split('—').first.trim(),
-            body:
-                'Tafuta bidhaa, ongeza kwenye kikapu, badili idadi na kamilisha malipo kwa haraka.',
+            icon: Icons.search_rounded,
+            title: 'Tafuta bidhaa',
+            body: 'Andika jina au barcode hapa. Gonga bidhaa ili iingie kwenye kikapu.',
+            targetId: 'pos_search',
           ),
-          const TutorialStep(
+          TutorialStep(
+            icon: Icons.qr_code_scanner_rounded,
+            title: 'Scan barcode',
+            body: 'Bonyeza hapa, elekeza kamera kwenye barcode — bidhaa inaingia kikapuni moja kwa moja. Scan nyingi mfululizo.',
+            targetId: 'pos_scan',
+          ),
+          TutorialStep(
+            icon: Icons.category_rounded,
+            title: 'Chuja kwa kategoria',
+            body: 'Gusa kategoria ili kuona bidhaa za aina hiyo tu.',
+            targetId: 'pos_categories',
+          ),
+          TutorialStep(
             icon: Icons.shopping_cart_checkout_rounded,
-            title: 'Kikapu cha mauzo',
-            body:
-                'Kagua jumla, punguzo na bidhaa kabla ya kutuma mauzo kwenda kwenye server.',
+            title: 'Kikapu na malipo',
+            body: 'Ukiongeza bidhaa, kitufe cha kikapu kinatokea chini kulia. Bonyeza kukamilisha mauzo, chagua aina ya malipo na upate risiti.',
+            targetId: 'pos_hero',
           ),
         ];
       case 2:
-        return [
+        return const [
+          TutorialStep(
+            icon: Icons.insights_rounded,
+            title: 'Muhtasari wa mauzo',
+            body: 'Mapato, madeni na mauzo yanayosubiri kwa mauzo unayoyaona chini.',
+            targetId: 'sales_summary',
+          ),
+          TutorialStep(
+            icon: Icons.filter_alt_rounded,
+            title: 'Tafuta na chuja',
+            body: 'Tafuta kwa jina la mteja au namba ya risiti, chuja kwa hali ya malipo au tarehe.',
+            targetId: 'sales_toolbar',
+          ),
           TutorialStep(
             icon: Icons.receipt_long_rounded,
-            title: l.sales,
-            body:
-                'Hapa unaona historia ya mauzo, risiti na taarifa za kila transaction.',
-          ),
-          const TutorialStep(
-            icon: Icons.refresh_rounded,
-            title: 'Refresh taarifa',
-            body:
-                'Vuta chini au tumia refresh kupata mauzo mapya kutoka kwenye server.',
+            title: 'Fungua muamala',
+            body: 'Gusa mauzo yoyote kuona bidhaa, kurekodi malipo ya deni, kuchapisha risiti au kufuta.',
+            targetId: 'sales_list',
           ),
         ];
       case 3:
-        return [
+        return const [
+          TutorialStep(
+            icon: Icons.add_box_rounded,
+            title: 'Ongeza bidhaa',
+            body: 'Bonyeza hapa kuongeza bidhaa mpya — jina, bei, stock, picha na barcode (scan au andika).',
+            targetId: 'products_add',
+          ),
+          TutorialStep(
+            icon: Icons.search_rounded,
+            title: 'Tafuta bidhaa',
+            body: 'Tafuta kwa jina au barcode, chuja kwa kategoria au stock ndogo.',
+            targetId: 'products_search',
+          ),
           TutorialStep(
             icon: Icons.inventory_2_rounded,
-            title: l.products,
-            body:
-                'Simamia bidhaa, bei, stock, batch na barcode kwa kila tawi la biashara.',
-          ),
-          const TutorialStep(
-            icon: Icons.add_box_rounded,
-            title: 'Ongeza stock',
-            body:
-                'Tumia vitufe vya kuongeza bidhaa au batch ili stock yako ibaki sahihi.',
+            title: 'Simamia stock',
+            body: 'Gusa bidhaa kuona maelezo, kuongeza stock (batch), vipimo vya kuuzia au kuhariri.',
+            targetId: 'products_list',
           ),
         ];
       case 4:
-        return [
+        return const [
           TutorialStep(
             icon: Icons.tune_rounded,
-            title: l.manage,
-            body:
-                'Hapa unasimamia wafanyakazi, settings, matawi na taarifa za biashara.',
+            title: 'Simamia biashara',
+            body: 'Tabs hizi zinakupeleka kwenye wafanyakazi, kategoria, vipimo, taarifa za duka na risiti.',
+            targetId: 'manage_tabs',
           ),
-          const TutorialStep(
+          TutorialStep(
             icon: Icons.group_rounded,
-            title: 'Ruhusa za wafanyakazi',
-            body:
-                'Angalia roles za wafanyakazi ili kila mtu afanye kazi zinazomfaa.',
+            title: 'Wafanyakazi na ruhusa',
+            body: 'Ongeza wafanyakazi na uwape roles (cashier, manager…) ili kila mtu aone kinachomhusu tu.',
+            targetId: 'manage_tabs',
           ),
         ];
       default:
         return [
-          TutorialStep(
-            icon: Icons.dashboard_rounded,
-            title: l.dashboard,
-            body:
-                'Dashboard inaonyesha mauzo ya leo, madeni, bidhaa zilizoisha na mwenendo wa biashara.',
-          ),
           const TutorialStep(
-            icon: Icons.touch_app_rounded,
-            title: 'Vitufe vya haraka',
-            body:
-                'Tumia shortcuts kwenda POS, sales, products au manage bila kupoteza muda.',
+            icon: Icons.person_rounded,
+            title: 'Profile na biashara',
+            body: 'Gusa hapa kubadili biashara au tawi, na kuona akaunti yako.',
+            targetId: 'dash_avatar',
           ),
           const TutorialStep(
             icon: Icons.visibility_rounded,
-            title: 'Ficha au onyesha salio',
-            body:
-                'Unaweza kuficha namba kubwa ukiwa mbele ya mteja, kisha kuzionyesha tena unapohitaji.',
+            title: 'Ficha salio',
+            body: 'Ukiwa mbele ya mteja, gusa jicho hili kuficha mapato ya leo.',
+            targetId: 'dash_eye',
+          ),
+          TutorialStep(
+            icon: Icons.point_of_sale_rounded,
+            title: l.sellNow,
+            body: 'Njia ya haraka ya kuanza kuuza. Kitufe cha kijani cha chini kinafanya hivyo hivyo.',
+            targetId: 'dash_sell_now',
+          ),
+          const TutorialStep(
+            icon: Icons.add_shopping_cart_rounded,
+            title: 'Menyu ya chini',
+            body: 'POS katikati; Dashibodi, Simamia, Mauzo na Bidhaa pembeni. Unaweza kubadili wakati wowote.',
+            targetId: 'nav_pos',
           ),
         ];
     }
@@ -265,6 +325,7 @@ class _DashboardScreenState extends State<DashboardScreen>
             child: Column(
               children: [
                 _buildDesktopTopBar(user, biz, app),
+                const SyncStatusBar(),
                 Expanded(
                   child: AnimatedSwitcher(
                     duration: const Duration(milliseconds: 250),
@@ -299,7 +360,7 @@ class _DashboardScreenState extends State<DashboardScreen>
       width: 255,
       decoration: BoxDecoration(
         gradient: LinearGradient(
-          colors: [Color(0xFF0A1628), Color(0xFF0D1F35)],
+          colors: [AppColors.bg, AppColors.bgCard],
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
         ),
@@ -402,34 +463,45 @@ class _DashboardScreenState extends State<DashboardScreen>
           ),
           const SizedBox(height: 8),
 
-          // Nav items
-          _sidebarItem(
-            0,
-            Icons.dashboard_outlined,
-            Icons.dashboard_rounded,
-            l.dashboard,
+          // Nav items — scrollable so the sidebar never overflows on short screens
+          Expanded(
+            child: SingleChildScrollView(
+              child: Column(
+                children: [
+                  _sidebarItem(
+                    0,
+                    Icons.dashboard_outlined,
+                    Icons.dashboard_rounded,
+                    l.dashboard,
+                  ),
+                  _sidebarItem(
+                    1,
+                    Icons.point_of_sale_outlined,
+                    Icons.point_of_sale_rounded,
+                    l.pos,
+                  ),
+                  _sidebarItem(
+                    2,
+                    Icons.receipt_long_outlined,
+                    Icons.receipt_long_rounded,
+                    l.sales,
+                  ),
+                  _sidebarItem(
+                    3,
+                    Icons.inventory_2_outlined,
+                    Icons.inventory_2_rounded,
+                    l.products,
+                  ),
+                  _sidebarItem(4, Icons.tune_outlined, Icons.tune_rounded, l.manage),
+                  _sidebarItem(5, Icons.insights_outlined, Icons.insights_rounded, 'Ripoti'),
+                  _sidebarItem(6, Icons.people_alt_outlined, Icons.people_alt_rounded, 'Wateja'),
+                  _sidebarItem(7, Icons.history_outlined, Icons.history_rounded, 'Historia ya Stock'),
+                ],
+              ),
+            ),
           ),
-          _sidebarItem(
-            1,
-            Icons.point_of_sale_outlined,
-            Icons.point_of_sale_rounded,
-            l.pos,
-          ),
-          _sidebarItem(
-            2,
-            Icons.receipt_long_outlined,
-            Icons.receipt_long_rounded,
-            l.sales,
-          ),
-          _sidebarItem(
-            3,
-            Icons.inventory_2_outlined,
-            Icons.inventory_2_rounded,
-            l.products,
-          ),
-          _sidebarItem(4, Icons.tune_outlined, Icons.tune_rounded, l.manage),
-
-          const Spacer(),
+          const SyncStatusPill(),
+          const SizedBox(width: 12),
           Container(height: 1, color: AppColors.border),
           const SizedBox(height: 4),
 
@@ -639,7 +711,7 @@ class _DashboardScreenState extends State<DashboardScreen>
   // ── Desktop Top Bar ───────────────────────────────────────────────
   Widget _buildDesktopTopBar(User user, Business? biz, AppProvider app) {
     final l = L.of(context);
-    final titles = [l.dashboard, l.pos, l.sales, l.products, l.manage];
+    final titles = [l.dashboard, l.pos, l.sales, l.products, l.manage, 'Ripoti', 'Wateja', 'Historia ya Stock'];
     return Container(
       height: 68,
       padding: const EdgeInsets.symmetric(horizontal: 28),
@@ -806,16 +878,29 @@ class _DashboardScreenState extends State<DashboardScreen>
     return Scaffold(
       backgroundColor: AppColors.bg,
       extendBody: true,
-      body: AnimatedSwitcher(
-        duration: const Duration(milliseconds: 280),
-        transitionBuilder: (child, anim) =>
-            FadeTransition(opacity: anim, child: child),
-        child: KeyedSubtree(
-          key: ValueKey('mobile_$_nav-$_productsRefreshKey'),
-          child: _nav == 0
-              ? _buildMobileDashFull(user, biz, app)
-              : _pageContent(desktop: false),
-        ),
+      body: Column(
+        children: [
+          const SyncStatusBar(safeTop: true),
+          Expanded(
+            // The bar already consumed the status-bar inset; don't let the
+            // page header pad for it a second time.
+            child: MediaQuery.removePadding(
+              context: context,
+              removeTop: SyncStatusBar.isVisible(context),
+              child: AnimatedSwitcher(
+                duration: const Duration(milliseconds: 280),
+                transitionBuilder: (child, anim) =>
+                    FadeTransition(opacity: anim, child: child),
+                child: KeyedSubtree(
+                  key: ValueKey('mobile_$_nav-$_productsRefreshKey'),
+                  child: _nav == 0
+                      ? _buildMobileDashFull(user, biz, app)
+                      : _pageContent(desktop: false),
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
       bottomNavigationBar: _buildFintechBottomNav(app),
     );
@@ -860,7 +945,9 @@ class _DashboardScreenState extends State<DashboardScreen>
               Expanded(
                 child: GestureDetector(
                   onTap: () => setState(() => _nav = 1),
-                  child: Column(
+                  child: TutorialTarget(
+                    id: 'nav_pos',
+                    child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       AnimatedContainer(
@@ -889,6 +976,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                         ),
                       ),
                     ],
+                  )
                   ),
                 ),
               ),
@@ -918,7 +1006,9 @@ class _DashboardScreenState extends State<DashboardScreen>
     return Expanded(
       child: GestureDetector(
         onTap: () => setState(() => _nav = index),
-        child: AnimatedContainer(
+        child: TutorialTarget(
+          id: 'nav_$index',
+          child: AnimatedContainer(
           duration: const Duration(milliseconds: 200),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
@@ -939,6 +1029,7 @@ class _DashboardScreenState extends State<DashboardScreen>
               ),
             ],
           ),
+        )
         ),
       ),
     );
@@ -955,9 +1046,6 @@ class _DashboardScreenState extends State<DashboardScreen>
 
         // ── Subscription banner ─────────────────────────────────────
         SliverToBoxAdapter(child: _buildSubscriptionBanner(biz)),
-
-        // ── Quick actions ──────────────────────────────────────────
-        SliverToBoxAdapter(child: _buildMobileQuickActions(l)),
 
         // ── KPI Cards ─────────────────────────────────────────────
         SliverToBoxAdapter(child: _buildMobileKpiRow(l)),
@@ -976,9 +1064,9 @@ class _DashboardScreenState extends State<DashboardScreen>
 
   // ── Fintech Header (dark green, like the image) ────────────────
   Widget _buildFintechHeader(User user, Business? biz, AppProvider app, L l) {
-    final revenue = (_stats['today_revenue'] ?? 0.0).toDouble();
-    final count = (_stats['today_sales_count'] ?? 0) as int;
-    final change = (_stats['revenue_change_pct'] ?? 0.0).toDouble();
+    final revenue = double.tryParse('${_stats['today_revenue'] ?? 0}') ?? 0.0;
+    final count = int.tryParse('${_stats['today_sales_count'] ?? 0}') ?? 0;
+    final change = double.tryParse('${_stats['revenue_change_pct'] ?? 0}') ?? 0.0;
     final up = change >= 0;
 
     return Container(
@@ -1002,7 +1090,9 @@ class _DashboardScreenState extends State<DashboardScreen>
               // ── Top row: greeting + icons ──────────────────────────
               Row(
                 children: [
-                  GestureDetector(
+                  TutorialTarget(
+                    id: 'dash_avatar',
+                    child: GestureDetector(
                     onTap: () => Navigator.of(context).push(
                       MaterialPageRoute(
                         builder: (_) => const BusinessSelectScreen(
@@ -1024,6 +1114,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                         ),
                       ),
                     ),
+                  ),
                   ),
                   const SizedBox(width: 12),
                   Expanded(
@@ -1118,16 +1209,15 @@ class _DashboardScreenState extends State<DashboardScreen>
                 ],
               ),
 
-              const SizedBox(height: 16),
+              const SizedBox(height: 12),
 
               _DashboardClockStrip(
-                now: _now,
                 businessName: biz?.businessName,
                 branchName: app.selectedBranch?.branchName,
                 isSw: l.isSw,
               ),
 
-              const SizedBox(height: 24),
+              const SizedBox(height: 14),
 
               // ── Balance / Revenue ──────────────────────────────────
               Text(
@@ -1168,7 +1258,9 @@ class _DashboardScreenState extends State<DashboardScreen>
                           ),
                   ),
                   const SizedBox(width: 10),
-                  GestureDetector(
+                  TutorialTarget(
+                    id: 'dash_eye',
+                    child: GestureDetector(
                     onTap: () =>
                         setState(() => _balanceVisible = !_balanceVisible),
                     child: Icon(
@@ -1178,6 +1270,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                       color: Colors.white54,
                       size: 22,
                     ),
+                  ),
                   ),
                 ],
               ),
@@ -1235,19 +1328,25 @@ class _DashboardScreenState extends State<DashboardScreen>
               Row(
                 children: [
                   Expanded(
-                    child: _headerButton(
+                    child: TutorialTarget(
+                      id: 'dash_sell_now',
+                      child: _headerButton(
                       l.sellNow,
                       Icons.point_of_sale_rounded,
                       () => setState(() => _nav = 1),
                     ),
+                    ),
                   ),
                   const SizedBox(width: 14),
                   Expanded(
-                    child: _headerButton(
+                    child: TutorialTarget(
+                      id: 'dash_view_sales',
+                      child: _headerButton(
                       l.viewSales,
                       Icons.receipt_long_rounded,
                       () => setState(() => _nav = 2),
                       outlined: true,
+                    ),
                     ),
                   ),
                 ],
@@ -1610,6 +1709,15 @@ class _DashboardScreenState extends State<DashboardScreen>
   // Shared KPI item list (with navigation) used by both mobile and desktop rows.
   List<_KpiItem> _kpiItems(L l) => [
     _KpiItem(
+      'Ripoti & P&L',
+      'Faida',
+      Icons.insights_rounded,
+      AppColors.accent,
+      onTap: () => Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => const ReportsScreen()),
+      ),
+    ),
+    _KpiItem(
       l.kpiProducts,
       '${_stats['total_products'] ?? 0}',
       Icons.inventory_2_rounded,
@@ -1628,7 +1736,9 @@ class _DashboardScreenState extends State<DashboardScreen>
       '${_stats['unpaid_loans_count'] ?? 0}',
       Icons.receipt_long_rounded,
       AppColors.chartRed,
-      onTap: () => setState(() => _nav = 2),
+      onTap: () => Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => const CustomersScreen()),
+      ),
     ),
     _KpiItem(
       l.kpiStaff,
@@ -2000,13 +2110,22 @@ class _DashboardScreenState extends State<DashboardScreen>
               context.read<AppProvider>().selectedBusiness,
             ),
             const SizedBox(height: 20),
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(flex: 4, child: _buildRevenueBanner(l)),
-                const SizedBox(width: 20),
-                Expanded(flex: 6, child: _buildChartCard(l, height: 200)),
-              ],
+            IntrinsicHeight(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Expanded(
+                    flex: 4,
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(22),
+                      onTap: () => setState(() => _nav = 5),
+                      child: _buildRevenueBanner(l),
+                    ),
+                  ),
+                  const SizedBox(width: 20),
+                  Expanded(flex: 6, child: _buildChartCard(l, height: 200)),
+                ],
+              ),
             ),
             const SizedBox(height: 20),
             _buildDesktopKpiRow(l),
@@ -2101,8 +2220,25 @@ class _DashboardScreenState extends State<DashboardScreen>
 
   Widget _buildRevenueBanner(L l) {
     final revenue = (_stats['today_revenue'] ?? 0.0).toDouble();
-    final count = (_stats['today_sales_count'] ?? 0) as int;
-    final change = (_stats['revenue_change_pct'] ?? 0.0).toDouble();
+    final count = int.tryParse('${_stats['today_sales_count'] ?? 0}') ?? 0;
+    final change = double.tryParse('${_stats['revenue_change_pct'] ?? 0}') ?? 0.0;
+    final totalRev = double.tryParse('${_stats['total_revenue'] ?? 0}') ?? 0.0;
+    final loansAmt = double.tryParse('${_stats['unpaid_loans_amount'] ?? 0}') ?? 0.0;
+    final loansCnt = int.tryParse('${_stats['unpaid_loans_count'] ?? 0}') ?? 0;
+    final fmt = NumberFormat('#,###', 'en_US');
+    Widget miniRow(IconData icon, String label, String value, {Color? color}) => Padding(
+          padding: const EdgeInsets.only(top: 8),
+          child: Row(children: [
+            Icon(icon, size: 15, color: Colors.white70),
+            const SizedBox(width: 8),
+            Expanded(child: Text(label, style: const TextStyle(color: Colors.white70, fontSize: 12))),
+            if (value.isEmpty)
+              const Icon(Icons.chevron_right_rounded, size: 18, color: Colors.white70)
+            else
+              Text(value,
+                  style: TextStyle(color: color ?? Colors.white, fontSize: 13, fontWeight: FontWeight.w800)),
+          ]),
+        );
     final up = change >= 0;
     return GradientCard(
       colors: AppColors.gradPrimary,
@@ -2180,6 +2316,14 @@ class _DashboardScreenState extends State<DashboardScreen>
             '$count ${l.kpiTodayCount}',
             style: TextStyle(color: Colors.white.withAlpha(160), fontSize: 12),
           ),
+          const Spacer(),
+          Divider(color: Colors.white.withAlpha(40), height: 22),
+          miniRow(Icons.stacked_line_chart_rounded, l.isSw ? 'Mauzo jumla' : 'Total sales',
+              'TZS ${fmt.format(totalRev)}'),
+          miniRow(Icons.receipt_long_rounded, l.isSw ? 'Madeni ($loansCnt)' : 'Debts ($loansCnt)',
+              'TZS ${fmt.format(loansAmt)}',
+              color: loansAmt > 0 ? AppColors.accentBright : Colors.white),
+          miniRow(Icons.insights_rounded, l.isSw ? 'Faida na ripoti' : 'Profit & reports', ''),
         ],
       ),
     );
@@ -2296,10 +2440,15 @@ class _DashboardScreenState extends State<DashboardScreen>
           sideTitles: SideTitles(
             showTitles: true,
             reservedSize: 52,
-            getTitlesWidget: (v, _) => Text(
-              _compact(v),
-              style: TextStyle(color: AppColors.textMuted, fontSize: 10),
-            ),
+            interval: maxY > 0 ? maxY / 4 : 25,
+            // fl_chart also draws the axis max; it lands on top of the last
+            // regular tick → skip it
+            getTitlesWidget: (v, meta) => v >= meta.max
+                ? const SizedBox.shrink()
+                : Text(
+                    _compact(v),
+                    style: TextStyle(color: AppColors.textMuted, fontSize: 10),
+                  ),
           ),
         ),
         topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
@@ -2569,6 +2718,12 @@ class _DashboardScreenState extends State<DashboardScreen>
         );
       case 4:
         return ManageScreen(desktop: desktop, initialTab: _manageInitialTab);
+      case 5:
+        return ReportsScreen(desktop: desktop);
+      case 6:
+        return CustomersScreen(desktop: desktop);
+      case 7:
+        return StockLedgerScreen(desktop: desktop);
       default:
         return desktop ? _buildDesktopDash(l) : _buildDashContent(l);
     }
@@ -2679,101 +2834,86 @@ class _QA {
   const _QA(this.icon, this.label, this.color, this.onTap);
 }
 
-class _DashboardClockStrip extends StatelessWidget {
-  final DateTime now;
+/// One slim line: "Duka • Tawi   ·   Jtt, 14 Sep · 12:24".
+/// Keeps its own minute timer so the rest of the dashboard never rebuilds
+/// just because the clock moved.
+class _DashboardClockStrip extends StatefulWidget {
   final String? businessName;
   final String? branchName;
   final bool isSw;
 
   const _DashboardClockStrip({
-    required this.now,
     required this.businessName,
     required this.branchName,
     required this.isSw,
   });
 
   @override
+  State<_DashboardClockStrip> createState() => _DashboardClockStripState();
+}
+
+class _DashboardClockStripState extends State<_DashboardClockStrip> {
+  late DateTime _now;
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _now = DateTime.now();
+    _schedule();
+  }
+
+  // Fire on the next full minute, then every minute.
+  void _schedule() {
+    final next = DateTime(_now.year, _now.month, _now.day, _now.hour, _now.minute + 1);
+    _timer = Timer(next.difference(DateTime.now()), () {
+      if (!mounted) return;
+      setState(() => _now = DateTime.now());
+      _schedule();
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final time = DateFormat('HH:mm:ss').format(now);
-    final date = DateFormat('EEE, dd MMM yyyy').format(now);
+    final time = DateFormat('HH:mm').format(_now);
+    final date = DateFormat('EEE, dd MMM').format(_now);
     final location = [
-      if ((businessName ?? '').isNotEmpty) businessName!,
-      if ((branchName ?? '').isNotEmpty) branchName!,
+      if ((widget.businessName ?? '').isNotEmpty) widget.businessName!,
+      if ((widget.branchName ?? '').isNotEmpty) widget.branchName!,
     ].join(' • ');
 
-    return AnimatedSwitcher(
-      duration: const Duration(milliseconds: 260),
-      switchInCurve: Curves.easeOutCubic,
-      switchOutCurve: Curves.easeInCubic,
-      child: Container(
-        key: ValueKey(time),
-        padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-        decoration: BoxDecoration(
-          color: Colors.white.withAlpha(18),
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: Colors.white.withAlpha(36)),
+    return Row(
+      children: [
+        const Icon(Icons.storefront_rounded, color: Colors.white60, size: 14),
+        const SizedBox(width: 6),
+        Expanded(
+          child: Text(
+            location,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: Colors.white70,
+              fontWeight: FontWeight.w600,
+              fontSize: 12,
+            ),
+          ),
         ),
-        child: Row(
-          children: [
-            Container(
-              width: 38,
-              height: 38,
-              decoration: BoxDecoration(
-                color: AppColors.accent.withAlpha(30),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: const Icon(
-                Icons.schedule_rounded,
-                color: AppColors.accentBright,
-                size: 20,
-              ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    isSw ? 'Saa ya biashara' : 'Business time',
-                    style: const TextStyle(color: Colors.white60, fontSize: 11),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    location.isEmpty ? date : location,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w700,
-                      fontSize: 12,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 8),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Text(
-                  time,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w900,
-                    fontSize: 17,
-                    fontFeatures: [FontFeature.tabularFigures()],
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  date,
-                  style: const TextStyle(color: Colors.white60, fontSize: 10),
-                ),
-              ],
-            ),
-          ],
+        const SizedBox(width: 8),
+        Text(
+          '$date · $time',
+          style: const TextStyle(
+            color: Colors.white60,
+            fontSize: 11,
+            fontFeatures: [FontFeature.tabularFigures()],
+          ),
         ),
-      ),
+      ],
     );
   }
 }

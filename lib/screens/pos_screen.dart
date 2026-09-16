@@ -1,18 +1,22 @@
 import 'dart:io' show Platform;
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show HapticFeedback;
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:printing/printing.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
+import '../models/customer.dart';
 import '../models/product.dart';
 import '../providers/app_provider.dart';
 import '../providers/cart_provider.dart';
 import '../theme/app_theme.dart';
 import '../l10n/app_l10n.dart';
 import '../utils/cat_style.dart';
+import '../widgets/first_run_tutorial.dart';
+import 'customers_screen.dart';
 
 class PosScreen extends StatefulWidget {
   final bool desktop;
@@ -35,7 +39,7 @@ class _PosScreenState extends State<PosScreen> {
   final _barcodeDesktopCtrl = TextEditingController();
 
   // Mobile barcode scan
-  bool get _canScan => !kIsWeb && (Platform.isAndroid || Platform.isIOS);
+  bool get _canScan => kIsWeb || Platform.isAndroid || Platform.isIOS;
 
   // Desktop: called when USB scanner or keyboard submits a barcode
   void _handleDesktopBarcode(String raw) {
@@ -101,21 +105,34 @@ class _PosScreenState extends State<PosScreen> {
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (_) => _PosBarcodeSheet(
-        onScanned: (barcode) {
-          _searchCtrl.text = barcode;
-          _search = barcode;
-          _filter();
-          // Auto-add if exactly one in-stock product matches
-          final matches = _filtered
-              .where((p) => p.barcode == barcode && p.stock > 0)
-              .toList();
-          if (matches.length == 1) {
-            context.read<CartProvider>().addProduct(matches.first);
-          }
-        },
-      ),
+      builder: (_) => _PosBarcodeSheet(onScanned: _addByBarcode),
     );
+  }
+
+  /// Look a barcode up in the FULL product list (ignores search/category
+  /// filters) and add it to the cart. Returns a message for the scanner toast
+  /// and whether it succeeded.
+  ({bool ok, String msg}) _addByBarcode(String raw) {
+    final code = raw.trim();
+    final l = L.of(context);
+    final matches = _allProducts.where((p) => p.barcode == code).toList();
+    if (matches.isEmpty) {
+      return (ok: false, msg: l.isSw ? 'Barcode haijulikani: $code' : 'Unknown barcode: $code');
+    }
+    final p = matches.first;
+    if (p.stock <= 0) {
+      return (ok: false, msg: '${p.name} — ${l.outOfStock}');
+    }
+    final cart = context.read<CartProvider>();
+    final before = cart.count;
+    cart.addProduct(p);
+    if (cart.count == before) {
+      return (ok: false, msg: l.isSw ? '${p.name}: stock imefika kikomo' : '${p.name}: stock limit reached');
+    }
+    final inCart = cart.items
+        .where((i) => i.productId == p.productId)
+        .fold(0, (a, i) => a + i.qty);
+    return (ok: true, msg: '${p.name}  ×$inCart');
   }
 
   @override
@@ -232,25 +249,8 @@ class _PosScreenState extends State<PosScreen> {
     final cart = context.watch<CartProvider>();
     return Scaffold(
       backgroundColor: AppColors.bg,
-      appBar: AppBar(
-        backgroundColor: AppColors.bgCard,
-        title: Text(
-          L.of(context).pos,
-          style: TextStyle(
-            color: AppColors.textWhite,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        iconTheme: IconThemeData(color: AppColors.textWhite),
-        actions: [
-          IconButton(
-            onPressed: _loadProducts,
-            icon: Icon(Icons.refresh_rounded, color: AppColors.textMuted),
-          ),
-        ],
-      ),
       body: PremiumPageEntrance(
-        child: _ProductBrowser(
+        child: _MobileProductBrowser(
           categories: _categories,
           filtered: _filtered,
           loading: _loading,
@@ -266,13 +266,12 @@ class _PosScreenState extends State<PosScreen> {
             _filter();
           },
           onRefresh: _loadProducts,
-          desktop: false,
           onScanTap: _canScan ? _openBarcodeScanner : null,
         ),
       ),
       floatingActionButton: cart.count > 0
           ? Padding(
-              padding: const EdgeInsets.only(bottom: 86),
+              padding: const EdgeInsets.only(bottom: 74),
               child: FloatingActionButton.extended(
                 heroTag: 'pos_mobile_cart_fab',
                 onPressed: () => _showMobileCart(context),
@@ -547,25 +546,29 @@ class _ProductBrowser extends StatelessWidget {
     final crossAxis = desktop ? 3 : 2;
     return Column(
       children: [
-        // ── Desktop barcode entry card (USB scanner or keyboard) ─────────
-        if (desktop && barcodeCtrl != null && onBarcodeSubmit != null)
-          _DesktopBarcodeBar(
-            controller: barcodeCtrl!,
-            onSubmit: onBarcodeSubmit!,
-            l: l,
+        // Hero summary (mobile only – the desktop cart panel shows totals)
+        if (!desktop)
+          _PosHeroSummary(
+            products: filtered.length,
+            desktop: desktop,
+            onScanTap: onScanTap,
+            onRefresh: onRefresh,
           ),
-        // Pro hero summary (mobile + desktop)
-        _PosHeroSummary(
-          products: filtered.length,
-          desktop: desktop,
-          onScanTap: onScanTap,
-          onRefresh: onRefresh,
-        ),
-        // Search bar
+        // Search bar (+ USB/keyboard barcode field on desktop)
         Padding(
-          padding: EdgeInsets.fromLTRB(desktop ? 20 : 12, 14, 12, 6),
+          padding: EdgeInsets.fromLTRB(desktop ? 20 : 12, desktop ? 16 : 14, desktop ? 20 : 12, 6),
           child: Row(
             children: [
+              if (desktop && barcodeCtrl != null && onBarcodeSubmit != null) ...[
+                Expanded(
+                  child: _DesktopBarcodeBar(
+                    controller: barcodeCtrl!,
+                    onSubmit: onBarcodeSubmit!,
+                    l: l,
+                  ),
+                ),
+                const SizedBox(width: 10),
+              ],
               Expanded(
                 child: TextField(
                   controller: searchCtrl,
@@ -731,19 +734,27 @@ class _ProductBrowser extends StatelessWidget {
                   padding: EdgeInsets.fromLTRB(
                     desktop ? 20 : 12,
                     0,
-                    12,
+                    desktop ? 20 : 12,
                     desktop ? 16 : 130,
                   ),
-                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: crossAxis,
-                    crossAxisSpacing: 10,
-                    mainAxisSpacing: 10,
-                    childAspectRatio: desktop ? 1.0 : 0.85,
-                  ),
+                  gridDelegate: desktop
+                      // as many ~170px cards as fit → ~6 per row on a laptop
+                      ? const SliverGridDelegateWithMaxCrossAxisExtent(
+                          maxCrossAxisExtent: 150,
+                          crossAxisSpacing: 8,
+                          mainAxisSpacing: 8,
+                          childAspectRatio: 1.0,
+                        )
+                      : SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: crossAxis,
+                          crossAxisSpacing: 10,
+                          mainAxisSpacing: 10,
+                          childAspectRatio: 0.85,
+                        ),
                   itemCount: filtered.length,
                   itemBuilder: (_, i) => _ProStaggeredItem(
                     index: i,
-                    child: _ProductCard(product: filtered[i], fmt: fmt),
+                    child: _ProductCard(product: filtered[i], fmt: fmt, compact: desktop),
                   ),
                 ),
         ),
@@ -778,6 +789,8 @@ class _DesktopBarcodeBarState extends State<_DesktopBarcodeBar> {
   void initState() {
     super.initState();
     _focus.addListener(_onFocusChange);
+    // USB scanners "type" into the focused field – keep it ready.
+    WidgetsBinding.instance.addPostFrameCallback((_) => _focus.requestFocus());
   }
 
   void _onFocusChange() => setState(() => _focused = _focus.hasFocus);
@@ -791,121 +804,58 @@ class _DesktopBarcodeBarState extends State<_DesktopBarcodeBar> {
 
   @override
   Widget build(BuildContext context) {
-    final l = widget.l;
-    return GestureDetector(
-      onTap: () => _focus.requestFocus(),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 180),
-        margin: const EdgeInsets.fromLTRB(20, 14, 12, 0),
-        padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-        decoration: BoxDecoration(
-          color: _focused
-              ? AppColors.primary.withAlpha(38)
-              : AppColors.primary.withAlpha(15),
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(
-            color: _focused
-                ? AppColors.primaryLt
-                : AppColors.primary.withAlpha(90),
-            width: _focused ? 1.8 : 1.2,
-          ),
+    return TextField(
+      controller: widget.controller,
+      focusNode: _focus,
+      style: TextStyle(color: AppColors.textWhite, fontSize: 13.5),
+      decoration: InputDecoration(
+        hintText: widget.l.isSw
+            ? 'Scan barcode (USB) au andika + Enter'
+            : 'Scan barcode (USB) or type + Enter',
+        hintStyle: TextStyle(color: AppColors.textMuted, fontSize: 13),
+        prefixIcon: Icon(
+          Icons.qr_code_scanner_rounded,
+          color: _focused ? AppColors.primaryLt : AppColors.textMuted,
+          size: 20,
         ),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            // ── Icon ────────────────────────────────────────────────────
-            AnimatedContainer(
-              duration: const Duration(milliseconds: 180),
-              padding: const EdgeInsets.all(9),
-              decoration: BoxDecoration(
-                color: _focused
-                    ? AppColors.primaryLt.withAlpha(35)
-                    : AppColors.primary.withAlpha(40),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Icon(
-                Icons.qr_code_scanner_rounded,
-                color: _focused
-                    ? AppColors.primaryLt
-                    : AppColors.primary.withAlpha(220),
-                size: 26,
-              ),
-            ),
-            const SizedBox(width: 12),
-            // ── Label + text field ───────────────────────────────────────
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    l.isSw ? 'Scan Barcode ya Bidhaa' : 'Scan Product Barcode',
-                    style: TextStyle(
-                      color: _focused
-                          ? AppColors.primaryLt
-                          : AppColors.textLight,
-                      fontWeight: FontWeight.w700,
-                      fontSize: 13,
-                    ),
+        suffixIcon: _focused
+            ? Padding(
+                padding: const EdgeInsets.only(right: 10),
+                child: Container(
+                  width: 8,
+                  height: 8,
+                  decoration: const BoxDecoration(
+                    color: AppColors.accent,
+                    shape: BoxShape.circle,
                   ),
-                  const SizedBox(height: 6),
-                  TextField(
-                    controller: widget.controller,
-                    focusNode: _focus,
-                    autofocus: true,
-                    textInputAction: TextInputAction.done,
-                    onSubmitted: widget.onSubmit,
-                    style: TextStyle(
-                      color: AppColors.textWhite,
-                      fontSize: 14,
-                      letterSpacing: 0.5,
-                    ),
-                    decoration: InputDecoration(
-                      hintText: l.isSw
-                          ? 'Scan kwa USB scanner → Enter kuongeza kwenye cart'
-                          : 'Scan with USB scanner → Enter to add to cart',
-                      hintStyle: TextStyle(
-                        color: AppColors.textMuted,
-                        fontSize: 12,
-                      ),
-                      prefixIcon: Icon(
-                        Icons.qr_code_rounded,
-                        color: AppColors.textMuted,
-                        size: 17,
-                      ),
-                      isDense: true,
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 10,
-                      ),
-                      enabledBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(10),
-                        borderSide: BorderSide(color: AppColors.border),
-                      ),
-                      focusedBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(10),
-                        borderSide: const BorderSide(
-                          color: AppColors.primaryLt,
-                          width: 1.5,
-                        ),
-                      ),
-                      filled: true,
-                      fillColor: AppColors.bgDark,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
+                ),
+              )
+            : null,
+        suffixIconConstraints: const BoxConstraints(minWidth: 0, minHeight: 0),
+        filled: true,
+        fillColor: _focused ? AppColors.primary.withAlpha(30) : AppColors.bgCard,
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide(color: AppColors.border),
         ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide(color: AppColors.primary.withAlpha(120)),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: AppColors.primaryLt, width: 1.6),
+        ),
+        contentPadding: const EdgeInsets.symmetric(vertical: 12),
       ),
+      onSubmitted: (v) {
+        widget.onSubmit(v);
+        _focus.requestFocus();
+      },
     );
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Unit picker — shown when a multi-unit product is tapped
-// ─────────────────────────────────────────────────────────────────────────────
 void _showUnitPicker(BuildContext context, Product product) {
   final fmt = NumberFormat('#,###', 'en_US');
   showModalBottomSheet(
@@ -1102,7 +1052,9 @@ void _showUnitPicker(BuildContext context, Product product) {
 class _ProductCard extends StatelessWidget {
   final Product product;
   final NumberFormat fmt;
-  const _ProductCard({required this.product, required this.fmt});
+  /// Tighter spacing / smaller type for the 3-column phone grid.
+  final bool compact;
+  const _ProductCard({required this.product, required this.fmt, this.compact = false});
 
   @override
   Widget build(BuildContext context) {
@@ -1133,12 +1085,12 @@ class _ProductCard extends StatelessWidget {
         duration: const Duration(milliseconds: 180),
         decoration: BoxDecoration(
           color: AppColors.bgCard,
-          borderRadius: BorderRadius.circular(18),
+          borderRadius: BorderRadius.circular(compact ? 14 : 18),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withAlpha(35),
-              blurRadius: 12,
-              offset: const Offset(0, 6),
+              color: Colors.black.withAlpha(compact ? 20 : 35),
+              blurRadius: compact ? 6 : 12,
+              offset: Offset(0, compact ? 3 : 6),
             ),
           ],
           border: Border.all(
@@ -1153,24 +1105,24 @@ class _ProductCard extends StatelessWidget {
         child: Stack(
           children: [
             Padding(
-              padding: const EdgeInsets.all(12),
+              padding: EdgeInsets.all(compact ? 8 : 12),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   // ── Category icon ───────────────────────────────────────────
                   Container(
-                    width: 46,
-                    height: 46,
+                    width: compact ? 32 : 46,
+                    height: compact ? 32 : 46,
                     decoration: BoxDecoration(
                       color: catColor.withAlpha(outOfStock ? 15 : 28),
-                      borderRadius: BorderRadius.circular(14),
+                      borderRadius: BorderRadius.circular(compact ? 10 : 14),
                       border: Border.all(
                         color: catColor.withAlpha(outOfStock ? 30 : 70),
                       ),
                     ),
-                    child: Icon(catIcon, color: catColor, size: 22),
+                    child: Icon(catIcon, color: catColor, size: compact ? 16 : 22),
                   ),
-                  const SizedBox(height: 8),
+                  SizedBox(height: compact ? 6 : 8),
                   // ── Name ─────────────────────────────────────────────────────
                   Text(
                     product.name,
@@ -1181,22 +1133,27 @@ class _ProductCard extends StatelessWidget {
                           ? AppColors.textMuted
                           : AppColors.textWhite,
                       fontWeight: FontWeight.w600,
-                      fontSize: 13,
+                      fontSize: compact ? 11.5 : 13,
+                      height: 1.15,
                     ),
                   ),
                   const Spacer(),
                   // ── Price ─────────────────────────────────────────────────────
                   Text(
-                    'TZS ${fmt.format(product.sellPrice)}',
+                    compact
+                        ? fmt.format(product.sellPrice)
+                        : 'TZS ${fmt.format(product.sellPrice)}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                       color: outOfStock
                           ? AppColors.textMuted
                           : AppColors.primary,
                       fontWeight: FontWeight.bold,
-                      fontSize: 14,
+                      fontSize: compact ? 12.5 : 14,
                     ),
                   ),
-                  const SizedBox(height: 3),
+                  SizedBox(height: compact ? 1 : 3),
                   // ── Stock ─────────────────────────────────────────────────────
                   Row(
                     children: [
@@ -1208,17 +1165,21 @@ class _ProductCard extends StatelessWidget {
                             : AppColors.textMuted,
                       ),
                       const SizedBox(width: 3),
-                      Text(
+                      Flexible(
+                        child: Text(
                         '${product.stock} ${product.unit}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                         style: TextStyle(
                           color: outOfStock
                               ? AppColors.chartRed
                               : AppColors.textMuted,
-                          fontSize: 11,
+                          fontSize: compact ? 10 : 11,
                           fontWeight: outOfStock
                               ? FontWeight.w600
                               : FontWeight.normal,
                         ),
+                      ),
                       ),
                     ],
                   ),
@@ -1464,41 +1425,79 @@ class _ModeChip extends StatelessWidget {
     borderRadius: BorderRadius.circular(12),
     child: AnimatedContainer(
       duration: const Duration(milliseconds: 180),
-      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
+      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 6),
       decoration: BoxDecoration(
-        gradient: selected
-            ? const LinearGradient(colors: AppColors.gradPrimary)
-            : null,
-        color: selected ? null : AppColors.bg,
-        borderRadius: BorderRadius.circular(12),
+        color: selected ? AppColors.primary : AppColors.bgInput,
+        borderRadius: BorderRadius.circular(10),
         border: Border.all(
-          color: selected ? AppColors.primaryLt : AppColors.border,
+          color: selected ? AppColors.primary : AppColors.border,
         ),
       ),
-      child: Column(
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(
             icon,
-            size: 16,
+            size: 14,
             color: selected ? Colors.white : AppColors.textMuted,
           ),
-          const SizedBox(height: 4),
-          Text(
-            label,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              color: selected ? Colors.white : AppColors.textMuted,
-              fontSize: 10,
-              fontWeight: selected ? FontWeight.bold : FontWeight.w600,
+          const SizedBox(width: 5),
+          Flexible(
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: selected ? Colors.white : AppColors.textMuted,
+                fontSize: 11,
+                fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
+              ),
             ),
           ),
         ],
       ),
     ),
   );
+}
+
+
+/// "Chagua mteja" button — opens the customer list in pick mode and fills
+/// the name/phone fields of the checkout form.
+class _PickCustomerButton extends StatelessWidget {
+  final TextEditingController nameCtrl;
+  final TextEditingController phoneCtrl;
+  final VoidCallback onPicked;
+  const _PickCustomerButton({required this.nameCtrl, required this.phoneCtrl, required this.onPicked});
+
+  @override
+  Widget build(BuildContext context) {
+    final l = L.of(context);
+    return Tooltip(
+      message: l.isSw ? 'Chagua mteja aliyesajiliwa' : 'Pick a saved customer',
+      child: SizedBox(
+        width: 44,
+        height: 44,
+        child: Material(
+          color: AppColors.primary.withAlpha(30),
+          borderRadius: BorderRadius.circular(12),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(12),
+            onTap: () async {
+              final c = await Navigator.of(context).push<Customer>(
+                MaterialPageRoute(builder: (_) => const CustomersScreen(pickMode: true)),
+              );
+              if (c == null) return;
+              nameCtrl.text = c.name;
+              if (c.phone.isNotEmpty) phoneCtrl.text = c.phone;
+              onPicked();
+            },
+            child: Icon(Icons.person_search_rounded, color: AppColors.primaryLt, size: 22),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class _PosInput extends StatelessWidget {
@@ -1525,7 +1524,8 @@ class _PosInput extends StatelessWidget {
       hintText: hint,
       hintStyle: TextStyle(color: AppColors.textMuted, fontSize: 13),
       prefixIcon: Icon(icon, color: AppColors.textMuted, size: 18),
-      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      isDense: true,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
     ),
   );
 }
@@ -1678,7 +1678,12 @@ class _CartPanelState extends State<_CartPanel> {
           _customerMode = 'walkin';
           _payType = 'cash';
         });
-        _snack(L.of(context).saleSuccess, AppColors.accent);
+        _snack(
+          res['offline'] == true
+              ? (res['message'] as String? ?? L.of(context).saleSuccess)
+              : L.of(context).saleSuccess,
+          res['offline'] == true ? Colors.orange : AppColors.accent,
+        );
         widget.onNavChange?.call(2);
       } else {
         _snack(
@@ -1878,14 +1883,28 @@ class _CartPanelState extends State<_CartPanel> {
                       onChanged: (v) => setState(() => _customerMode = v),
                     ),
                     const SizedBox(height: 10),
-                    _PosInput(
-                      controller: _customerCtrl,
-                      hint: _needsCustomerDetails
-                          ? l.customer
-                          : (l.isSw
-                                ? 'Jina la mteja (optional)'
-                                : 'Customer name (optional)'),
-                      icon: Icons.person_outline_rounded,
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _PosInput(
+                            controller: _customerCtrl,
+                            hint: _needsCustomerDetails
+                                ? l.customer
+                                : (l.isSw
+                                      ? 'Jina la mteja (optional)'
+                                      : 'Customer name (optional)'),
+                            icon: Icons.person_outline_rounded,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        _PickCustomerButton(
+                          nameCtrl: _customerCtrl,
+                          phoneCtrl: _phoneCtrl,
+                          onPicked: () => setState(() {
+                            if (_customerMode == 'walkin') _customerMode = 'registered';
+                          }),
+                        ),
+                      ],
                     ),
                     if (_needsCustomerDetails) ...[
                       const SizedBox(height: 10),
@@ -2151,13 +2170,16 @@ class _CartSheetState extends State<_CartSheet> {
 
         if (!mounted) return;
         final messenger = ScaffoldMessenger.of(context);
-        final successMsg = L.of(context).saleSuccess;
+        final offline = res['offline'] == true;
+        final successMsg = offline
+            ? (res['message'] as String? ?? L.of(context).saleSuccess)
+            : L.of(context).saleSuccess;
         cart.clear();
         Navigator.pop(context);
         messenger.showSnackBar(
           SnackBar(
             content: Text(successMsg),
-            backgroundColor: AppColors.accent,
+            backgroundColor: offline ? Colors.orange : AppColors.accent,
             behavior: SnackBarBehavior.floating,
           ),
         );
@@ -2188,88 +2210,70 @@ class _CartSheetState extends State<_CartSheet> {
   Widget build(BuildContext context) {
     final l = L.of(context);
     final cart = context.watch<CartProvider>();
-    final bottomInset = MediaQuery.of(context).viewInsets.bottom;
+    final mq = MediaQuery.of(context);
+    final bottomInset = mq.viewInsets.bottom;
+    final maxItemsH = mq.size.height * 0.34;
+
     return Padding(
       padding: EdgeInsets.only(bottom: bottomInset),
       child: Container(
-        constraints: BoxConstraints(
-          maxHeight: MediaQuery.of(context).size.height * 0.92,
-        ),
+        constraints: BoxConstraints(maxHeight: mq.size.height * 0.94),
         decoration: BoxDecoration(
           color: AppColors.bgCard,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(26)),
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            // ── handle + header ───────────────────────────────────────────
             Container(
-              width: 44,
+              width: 40,
               height: 4,
-              margin: const EdgeInsets.all(12),
+              margin: const EdgeInsets.only(top: 10, bottom: 6),
               decoration: BoxDecoration(
-                color: Colors.white24,
+                color: AppColors.border,
                 borderRadius: BorderRadius.circular(2),
               ),
             ),
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              padding: const EdgeInsets.fromLTRB(16, 0, 6, 4),
               child: Row(
                 children: [
-                  Container(
-                    padding: const EdgeInsets.all(9),
-                    decoration: BoxDecoration(
-                      gradient: const LinearGradient(
-                        colors: AppColors.gradPrimary,
+                  Expanded(
+                    child: Text(
+                      l.isSw ? 'Kamilisha Mauzo' : 'Complete Sale',
+                      style: TextStyle(
+                        color: AppColors.textWhite,
+                        fontSize: 17,
+                        fontWeight: FontWeight.w800,
                       ),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: const Icon(
-                      Icons.point_of_sale_rounded,
-                      color: Colors.white,
-                      size: 20,
                     ),
                   ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          l.isSw ? 'Kamilisha Mauzo' : 'Complete Sale',
-                          style: TextStyle(
-                            color: AppColors.textWhite,
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        Text(
-                          '${cart.count} ${l.items} • TZS ${widget.fmt.format(cart.total)}',
-                          style: TextStyle(
-                            color: AppColors.textMuted,
-                            fontSize: 12,
-                          ),
-                        ),
-                      ],
-                    ),
+                  Text(
+                    '${cart.count} ${l.items}',
+                    style: TextStyle(color: AppColors.textMuted, fontSize: 12),
                   ),
                   IconButton(
                     onPressed: () => Navigator.pop(context),
                     icon: Icon(Icons.close_rounded, color: AppColors.textMuted),
+                    visualDensity: VisualDensity.compact,
                   ),
                 ],
               ),
             ),
-            Flexible(
+            // ── items (bounded, scrolls on its own) ───────────────────────
+            ConstrainedBox(
+              constraints: BoxConstraints(maxHeight: maxItemsH),
               child: ListView.separated(
                 shrinkWrap: true,
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 itemCount: cart.items.length,
-                separatorBuilder: (ctx, i) =>
+                separatorBuilder: (_, _) =>
                     Divider(color: AppColors.border, height: 1),
                 itemBuilder: (ctx, i) {
                   final item = cart.items[i];
                   return Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 10),
+                    padding: const EdgeInsets.symmetric(vertical: 6),
                     child: Row(
                       children: [
                         Expanded(
@@ -2283,13 +2287,14 @@ class _CartSheetState extends State<_CartSheet> {
                                 style: TextStyle(
                                   color: AppColors.textWhite,
                                   fontWeight: FontWeight.w600,
+                                  fontSize: 13.5,
                                 ),
                               ),
                               Text(
-                                'TZS ${widget.fmt.format(item.unitPrice)}${item.unitName.isNotEmpty ? " / ${item.unitName}" : ""}',
+                                '@ ${widget.fmt.format(item.unitPrice)}${item.unitName.isNotEmpty ? " / ${item.unitName}" : ""}',
                                 style: TextStyle(
                                   color: AppColors.textMuted,
-                                  fontSize: 12,
+                                  fontSize: 11,
                                 ),
                               ),
                             ],
@@ -2304,15 +2309,14 @@ class _CartSheetState extends State<_CartSheet> {
                               .read<CartProvider>()
                               .increaseQty(item.cartKey),
                         ),
-                        const SizedBox(width: 8),
                         SizedBox(
-                          width: 90,
+                          width: 74,
                           child: Text(
-                            'TZS ${widget.fmt.format(item.subtotal)}',
+                            widget.fmt.format(item.subtotal),
                             textAlign: TextAlign.right,
-                            style: const TextStyle(
-                              color: AppColors.primary,
-                              fontWeight: FontWeight.bold,
+                            style: TextStyle(
+                              color: AppColors.textWhite,
+                              fontWeight: FontWeight.w700,
                               fontSize: 13,
                             ),
                           ),
@@ -2324,144 +2328,189 @@ class _CartSheetState extends State<_CartSheet> {
               ),
             ),
             Divider(color: AppColors.border, height: 1),
+            // ── payment form (fits; scrolls only when the keyboard is up) ──
             Flexible(
               child: SingleChildScrollView(
-                padding: EdgeInsets.fromLTRB(
-                  16,
-                  12,
-                  16,
-                  16 + MediaQuery.of(context).padding.bottom,
-                ),
+                padding: const EdgeInsets.fromLTRB(16, 10, 16, 6),
                 child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _TotalCard(fmt: widget.fmt, total: cart.total),
-                    const SizedBox(height: 12),
+                    _sectionLabel(l.payType),
+                    const SizedBox(height: 6),
+                    SizedBox(
+                      height: 36,
+                      child: ListView(
+                        scrollDirection: Axis.horizontal,
+                        children: [
+                          _payChip('cash', _plain(l.cash), Icons.payments_rounded),
+                          _payChip('loan', _plain(l.loan), Icons.credit_score_rounded),
+                          _payChip('slow_payment', l.isSw ? 'Polepole' : 'Installment', Icons.hourglass_bottom_rounded),
+                          _payChip('cash_not_collected', l.isSw ? 'Bado kulipwa' : 'Not collected', Icons.pending_rounded),
+                          _payChip('bank_transfer', l.isSw ? 'Benki' : 'Bank', Icons.account_balance_rounded),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    _sectionLabel(l.isSw ? 'Mteja' : 'Customer'),
+                    const SizedBox(height: 6),
                     _CustomerModeSelector(
                       value: _customerMode,
                       onChanged: (v) => setState(() => _customerMode = v),
                     ),
-                    const SizedBox(height: 10),
-                    _PosInput(
-                      controller: _customerCtrl,
-                      hint: _needsCustomerDetails
-                          ? l.customer
-                          : (l.isSw
-                                ? 'Jina la mteja (optional)'
-                                : 'Customer name (optional)'),
-                      icon: Icons.person_outline_rounded,
-                    ),
-                    if (_needsCustomerDetails) ...[
-                      const SizedBox(height: 10),
-                      _PosInput(
-                        controller: _phoneCtrl,
-                        hint: l.isSw
-                            ? 'Namba ya simu kwa SMS'
-                            : 'Phone number for SMS',
-                        icon: Icons.phone_rounded,
-                        keyboardType: TextInputType.phone,
-                      ),
-                      const SizedBox(height: 10),
-                      _PosInput(
-                        controller: _locationCtrl,
-                        hint: l.isSw
-                            ? 'Mahali / anuani (optional)'
-                            : 'Location / address (optional)',
-                        icon: Icons.location_on_outlined,
-                      ),
-                    ],
-                    const SizedBox(height: 10),
-                    DropdownButtonFormField<String>(
-                      initialValue: _payType,
-                      dropdownColor: AppColors.bgCard,
-                      style: TextStyle(color: AppColors.textWhite),
-                      decoration: InputDecoration(
-                        labelText: l.payType,
-                        prefixIcon: Icon(
-                          Icons.payment_rounded,
-                          color: AppColors.textMuted,
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Expanded(
+                          flex: 3,
+                          child: _PosInput(
+                            controller: _customerCtrl,
+                            hint: _needsCustomerDetails
+                                ? l.customer
+                                : (l.isSw ? 'Jina (optional)' : 'Name (optional)'),
+                            icon: Icons.person_outline_rounded,
+                          ),
                         ),
-                      ),
-                      items: [
-                        DropdownMenuItem(value: 'cash', child: Text(l.cash)),
-                        DropdownMenuItem(value: 'loan', child: Text(l.loan)),
-                        DropdownMenuItem(
-                          value: 'slow_payment',
-                          child: Text(l.slowPay),
+                        const SizedBox(width: 8),
+                        _PickCustomerButton(
+                          nameCtrl: _customerCtrl,
+                          phoneCtrl: _phoneCtrl,
+                          onPicked: () => setState(() {
+                            if (_customerMode == 'walkin') _customerMode = 'registered';
+                          }),
                         ),
-                        DropdownMenuItem(
-                          value: 'cash_not_collected',
-                          child: Text(l.cashNotCollected),
-                        ),
-                        DropdownMenuItem(
-                          value: 'bank_transfer',
-                          child: Text(l.bankTransfer),
-                        ),
+                        if (_needsCustomerDetails) ...[
+                          const SizedBox(width: 8),
+                          Expanded(
+                            flex: 2,
+                            child: _PosInput(
+                              controller: _phoneCtrl,
+                              hint: l.isSw ? 'Simu' : 'Phone',
+                              icon: Icons.phone_rounded,
+                              keyboardType: TextInputType.phone,
+                            ),
+                          ),
+                        ],
                       ],
-                      onChanged: (v) => setState(() => _payType = v!),
                     ),
-                    if (_payType != 'cash') ...[
-                      const SizedBox(height: 10),
-                      _PosInput(
-                        controller: _paidCtrl,
-                        hint: l.isSw
-                            ? 'Kiasi alicholipa sasa (optional)'
-                            : 'Amount paid now (optional)',
-                        icon: Icons.payments_outlined,
-                        keyboardType: TextInputType.number,
-                      ),
-                    ],
-                    if (_needsCustomerDetails) ...[
-                      const SizedBox(height: 10),
-                      _PosInput(
-                        controller: _noteCtrl,
-                        hint: l.isSw
-                            ? 'Maelezo ya mteja/mkopo/SMS (optional)'
-                            : 'Customer/credit/SMS notes (optional)',
-                        icon: Icons.note_alt_outlined,
-                        maxLines: 2,
-                      ),
-                    ],
-                    const SizedBox(height: 14),
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton.icon(
-                        onPressed: _processing ? null : _checkout,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: AppColors.accent,
-                          padding: const EdgeInsets.symmetric(vertical: 14),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(14),
-                          ),
-                        ),
-                        icon: _processing
-                            ? SizedBox(
-                                width: 22,
-                                height: 22,
-                                child: CircularProgressIndicator(
-                                  color: AppColors.bgDark,
-                                  strokeWidth: 2,
-                                ),
-                              )
-                            : Icon(
-                                Icons.check_circle_rounded,
-                                color: AppColors.bgDark,
+                    if (_payType != 'cash' || _needsCustomerDetails) ...[
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          if (_payType != 'cash')
+                            Expanded(
+                              child: _PosInput(
+                                controller: _paidCtrl,
+                                hint: l.isSw ? 'Amelipa sasa' : 'Paid now',
+                                icon: Icons.payments_outlined,
+                                keyboardType: TextInputType.number,
                               ),
-                        label: Text(
-                          _processing ? l.saving : l.saveSale,
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                            color: AppColors.bgDark,
-                          ),
-                        ),
+                            ),
+                          if (_payType != 'cash' && _needsCustomerDetails)
+                            const SizedBox(width: 8),
+                          if (_needsCustomerDetails)
+                            Expanded(
+                              child: _PosInput(
+                                controller: _noteCtrl,
+                                hint: l.isSw ? 'Maelezo / mahali' : 'Note / location',
+                                icon: Icons.note_alt_outlined,
+                              ),
+                            ),
+                        ],
                       ),
-                    ),
+                    ],
                   ],
+                ),
+              ),
+            ),
+            // ── pay button (pinned) ───────────────────────────────────────
+            Padding(
+              padding: EdgeInsets.fromLTRB(16, 8, 16, 12 + mq.padding.bottom),
+              child: SizedBox(
+                width: double.infinity,
+                height: 52,
+                child: ElevatedButton(
+                  onPressed: _processing ? null : _checkout,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.accent,
+                    foregroundColor: AppColors.bgDark,
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                  ),
+                  child: _processing
+                      ? SizedBox(
+                          width: 22,
+                          height: 22,
+                          child: CircularProgressIndicator(
+                            color: AppColors.bgDark,
+                            strokeWidth: 2,
+                          ),
+                        )
+                      : Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            const Icon(Icons.check_circle_rounded, size: 20),
+                            const SizedBox(width: 8),
+                            Flexible(
+                              child: Text(
+                                '${l.isSw ? 'Hifadhi Mauzo' : 'Save Sale'}  •  TZS ${widget.fmt.format(cart.total)}',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
                 ),
               ),
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  /// Labels in L carry a leading emoji; the chip already has an icon.
+  static String _plain(String s) =>
+      s.replaceFirst(RegExp(r'^[^\p{L}\p{N}]+', unicode: true), '').trim();
+
+  Widget _sectionLabel(String t) => Text(
+        t.toUpperCase(),
+        style: TextStyle(
+          color: AppColors.textMuted,
+          fontSize: 10.5,
+          fontWeight: FontWeight.w800,
+          letterSpacing: 0.8,
+        ),
+      );
+
+  Widget _payChip(String value, String label, IconData icon) {
+    final sel = _payType == value;
+    return Padding(
+      padding: const EdgeInsets.only(right: 8),
+      child: ChoiceChip(
+        avatar: Icon(icon, size: 15, color: sel ? Colors.white : AppColors.textMuted),
+        label: Text(
+          label,
+          style: TextStyle(
+            color: sel ? Colors.white : AppColors.textMuted,
+            fontSize: 12,
+            fontWeight: sel ? FontWeight.w700 : FontWeight.w500,
+          ),
+        ),
+        selected: sel,
+        showCheckmark: false,
+        selectedColor: AppColors.primary,
+        backgroundColor: AppColors.bgInput,
+        side: BorderSide(color: sel ? AppColors.primary : AppColors.border),
+        visualDensity: VisualDensity.compact,
+        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        onSelected: (_) => setState(() => _payType = value),
       ),
     );
   }
@@ -2471,7 +2520,8 @@ class _CartSheetState extends State<_CartSheet> {
 // POS Barcode Scanner Sheet (mobile only)
 // ─────────────────────────────────────────────────────────────────────────────
 class _PosBarcodeSheet extends StatefulWidget {
-  final ValueChanged<String> onScanned;
+  /// Called for every scan; returns a toast message + success flag.
+  final ({bool ok, String msg}) Function(String barcode) onScanned;
   const _PosBarcodeSheet({required this.onScanned});
   @override
   State<_PosBarcodeSheet> createState() => _PosBarcodeSheetState();
@@ -2479,13 +2529,22 @@ class _PosBarcodeSheet extends StatefulWidget {
 
 class _PosBarcodeSheetState extends State<_PosBarcodeSheet> {
   late MobileScannerController _ctrl;
-  bool _scanned = false;
+  String? _lastCode;
+  DateTime _lastAt = DateTime.fromMillisecondsSinceEpoch(0);
+  String? _toast;
+  bool _toastOk = true;
+  int _added = 0;
 
   @override
   void initState() {
     super.initState();
     _ctrl = MobileScannerController(
-      detectionSpeed: DetectionSpeed.noDuplicates,
+      detectionSpeed: DetectionSpeed.normal,
+      formats: const [
+        BarcodeFormat.ean13, BarcodeFormat.ean8, BarcodeFormat.upcA,
+        BarcodeFormat.upcE, BarcodeFormat.code128, BarcodeFormat.code39,
+        BarcodeFormat.qrCode, BarcodeFormat.codabar,
+      ],
     );
   }
 
@@ -2495,14 +2554,34 @@ class _PosBarcodeSheetState extends State<_PosBarcodeSheet> {
     super.dispose();
   }
 
+  /// Continuous mode: the sheet stays open so the cashier can scan item
+  /// after item. The same code is accepted again only after 1.5 s so one
+  /// steady frame does not add the product ten times.
   void _onDetect(BarcodeCapture capture) {
-    if (_scanned) return;
     final raw = capture.barcodes.firstOrNull?.rawValue;
     if (raw == null || raw.isEmpty) return;
-    _scanned = true;
-    _ctrl.stop();
-    Navigator.pop(context);
-    widget.onScanned(raw);
+    final now = DateTime.now();
+    if (raw == _lastCode &&
+        now.difference(_lastAt) < const Duration(milliseconds: 1500)) {
+      return;
+    }
+    _lastCode = raw;
+    _lastAt = now;
+    final r = widget.onScanned(raw);
+    if (r.ok) {
+      _added++;
+      HapticFeedback.mediumImpact();
+    } else {
+      HapticFeedback.vibrate();
+    }
+    if (!mounted) return;
+    setState(() {
+      _toast = r.msg;
+      _toastOk = r.ok;
+    });
+    Future.delayed(const Duration(milliseconds: 1800), () {
+      if (mounted && _toast == r.msg) setState(() => _toast = null);
+    });
   }
 
   @override
@@ -2536,18 +2615,37 @@ class _PosBarcodeSheetState extends State<_PosBarcodeSheet> {
                 ),
                 const SizedBox(width: 10),
                 Expanded(
-                  child: Text(
-                    l.scanBarcode,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 16,
-                    ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        l.scanBarcode,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16,
+                        ),
+                      ),
+                      Text(
+                        _added == 0
+                            ? (l.isSw ? 'Scan bidhaa moja baada ya nyingine' : 'Scan items one after another')
+                            : (l.isSw ? '$_added zimeongezwa kwenye mkoba' : '$_added added to cart'),
+                        style: const TextStyle(color: Colors.white54, fontSize: 12),
+                      ),
+                    ],
                   ),
                 ),
-                IconButton(
+                TextButton.icon(
                   onPressed: () => Navigator.pop(context),
-                  icon: const Icon(Icons.close_rounded, color: Colors.white54),
+                  style: TextButton.styleFrom(
+                    backgroundColor: AppColors.primary,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                  icon: const Icon(Icons.check_rounded, size: 18),
+                  label: Text(l.isSw ? 'Maliza' : 'Done',
+                      style: const TextStyle(fontWeight: FontWeight.bold)),
                 ),
               ],
             ),
@@ -2559,12 +2657,68 @@ class _PosBarcodeSheetState extends State<_PosBarcodeSheet> {
                   borderRadius: const BorderRadius.vertical(
                     top: Radius.circular(20),
                   ),
-                  child: MobileScanner(controller: _ctrl, onDetect: _onDetect),
+                  child: MobileScanner(
+                    controller: _ctrl,
+                    onDetect: _onDetect,
+                    errorBuilder: (ctx, error) => Center(
+                      child: Padding(
+                        padding: const EdgeInsets.all(24),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.no_photography_rounded, color: Colors.white54, size: 42),
+                            const SizedBox(height: 12),
+                            Text(
+                              l.isSw
+                                  ? 'Kamera haipatikani.\nRuhusu kamera kwenye settings za simu, au andika barcode kwenye kisanduku cha kutafuta.'
+                                  : 'Camera unavailable.\nAllow camera access in phone settings, or type the barcode in the search box.',
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(color: Colors.white70, fontSize: 13),
+                            ),
+                            const SizedBox(height: 6),
+                            Text(error.errorCode.name,
+                                style: const TextStyle(color: Colors.white30, fontSize: 11)),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
                 ),
                 CustomPaint(
                   painter: _PosScanOverlay(),
                   child: const SizedBox.expand(),
                 ),
+                if (_toast != null)
+                  Positioned(
+                    top: 16,
+                    left: 16,
+                    right: 16,
+                    child: AnimatedOpacity(
+                      opacity: 1,
+                      duration: const Duration(milliseconds: 150),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                        decoration: BoxDecoration(
+                          color: (_toastOk ? AppColors.accent : AppColors.chartRed).withAlpha(235),
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(_toastOk ? Icons.add_shopping_cart_rounded : Icons.error_outline_rounded,
+                                color: Colors.white, size: 18),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(_toast!,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                      color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
                 Positioned(
                   bottom: 20,
                   left: 0,
@@ -3121,4 +3275,324 @@ class _PosReceiptSheet extends StatelessWidget {
       ],
     ),
   );
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MOBILE product browser — slivers: compact hero scrolls away, search +
+// categories stay pinned, 3-column compact grid fills the screen.
+// ─────────────────────────────────────────────────────────────────────────────
+class _MobileProductBrowser extends StatelessWidget {
+  final List<String> categories;
+  final List<Product> filtered;
+  final bool loading;
+  final String selectedCat;
+  final TextEditingController searchCtrl;
+  final NumberFormat fmt;
+  final ValueChanged<String> onSearch;
+  final ValueChanged<String> onCatSelect;
+  final VoidCallback onRefresh;
+  final VoidCallback? onScanTap;
+
+  const _MobileProductBrowser({
+    required this.categories,
+    required this.filtered,
+    required this.loading,
+    required this.selectedCat,
+    required this.searchCtrl,
+    required this.fmt,
+    required this.onSearch,
+    required this.onCatSelect,
+    required this.onRefresh,
+    required this.onScanTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final l = L.of(context);
+    final width = MediaQuery.sizeOf(context).width;
+    // 3 columns on phones, 4 on wide phones / small tablets
+    final cols = width >= 520 ? 4 : 3;
+
+    return RefreshIndicator(
+      color: AppColors.primary,
+      onRefresh: () async => onRefresh(),
+      child: CustomScrollView(
+        physics: const BouncingScrollPhysics(
+          parent: AlwaysScrollableScrollPhysics(),
+        ),
+        slivers: [
+          // ── Compact hero (scrolls away) ─────────────────────────────────
+          SliverToBoxAdapter(
+            child: SafeArea(
+              bottom: false,
+              child: TutorialTarget(
+                id: 'pos_hero',
+                child: _MobilePosHero(
+                  products: filtered.length,
+                  onScanTap: onScanTap,
+                  onRefresh: onRefresh,
+                ),
+              ),
+            ),
+          ),
+          // ── Search + categories (pinned) ───────────────────────────────
+          SliverPersistentHeader(
+            pinned: true,
+            delegate: _PinnedHeaderDelegate(
+              height: 100,
+              child: Container(
+                color: AppColors.bg,
+                padding: const EdgeInsets.fromLTRB(12, 6, 12, 0),
+                child: Column(
+                  children: [
+                    SizedBox(
+                      height: 44,
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: TutorialTarget(
+                              id: 'pos_search',
+                              child: TextField(
+                              controller: searchCtrl,
+                              style: TextStyle(color: AppColors.textWhite, fontSize: 14),
+                              decoration: InputDecoration(
+                                hintText: l.searchProduct,
+                                hintStyle: TextStyle(color: AppColors.textMuted, fontSize: 13),
+                                prefixIcon: Icon(Icons.search_rounded, color: AppColors.textMuted, size: 20),
+                                suffixIcon: ValueListenableBuilder<TextEditingValue>(
+                                  valueListenable: searchCtrl,
+                                  builder: (_, v, _) => v.text.isEmpty
+                                      ? const SizedBox.shrink()
+                                      : IconButton(
+                                          icon: Icon(Icons.close_rounded, color: AppColors.textMuted, size: 18),
+                                          onPressed: () {
+                                            searchCtrl.clear();
+                                            onSearch('');
+                                          },
+                                        ),
+                                ),
+                                isDense: true,
+                                filled: true,
+                                fillColor: AppColors.bgCard,
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                  borderSide: BorderSide(color: AppColors.border),
+                                ),
+                                enabledBorder: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                  borderSide: BorderSide(color: AppColors.border),
+                                ),
+                                focusedBorder: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                  borderSide: const BorderSide(color: AppColors.primary, width: 1.5),
+                                ),
+                                contentPadding: const EdgeInsets.symmetric(vertical: 10),
+                              ),
+                              onChanged: onSearch,
+                            ),
+                            ),
+                          ),
+                          if (onScanTap != null) ...[
+                            const SizedBox(width: 8),
+                            TutorialTarget(
+                              id: 'pos_scan',
+                              child: SizedBox(
+                              width: 44,
+                              height: 44,
+                              child: Material(
+                                color: AppColors.primary,
+                                borderRadius: BorderRadius.circular(12),
+                                child: InkWell(
+                                  borderRadius: BorderRadius.circular(12),
+                                  onTap: onScanTap,
+                                  child: const Icon(Icons.qr_code_scanner_rounded,
+                                      color: Colors.white, size: 22),
+                                ),
+                              ),
+                            ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    TutorialTarget(
+                      id: 'pos_categories',
+                      child: SizedBox(
+                      height: 36,
+                      child: ListView.separated(
+                        scrollDirection: Axis.horizontal,
+                        itemCount: categories.length,
+                        separatorBuilder: (_, _) => const SizedBox(width: 6),
+                        itemBuilder: (ctx, i) {
+                          final cat = categories[i];
+                          final sel = cat == selectedCat;
+                          return ChoiceChip(
+                            label: Text(
+                              cat,
+                              style: TextStyle(
+                                color: sel ? Colors.white : AppColors.textMuted,
+                                fontSize: 12,
+                                fontWeight: sel ? FontWeight.w700 : FontWeight.w500,
+                              ),
+                            ),
+                            selected: sel,
+                            showCheckmark: false,
+                            selectedColor: AppColors.primary,
+                            backgroundColor: AppColors.bgCard,
+                            visualDensity: VisualDensity.compact,
+                            materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            padding: const EdgeInsets.symmetric(horizontal: 10),
+                            side: BorderSide(color: sel ? AppColors.primary : AppColors.border),
+                            onSelected: (_) => onCatSelect(cat),
+                          );
+                        },
+                      ),
+                    ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          // ── Grid ────────────────────────────────────────────────────────
+          if (loading)
+            const SliverFillRemaining(
+              hasScrollBody: false,
+              child: Center(child: CircularProgressIndicator(color: AppColors.primary)),
+            )
+          else if (filtered.isEmpty)
+            SliverFillRemaining(
+              hasScrollBody: false,
+              child: Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.inventory_2_outlined, color: AppColors.textMuted, size: 56),
+                    const SizedBox(height: 12),
+                    Text(l.noProducts, style: TextStyle(color: AppColors.textMuted, fontSize: 15)),
+                    const SizedBox(height: 8),
+                    TextButton.icon(
+                      onPressed: onRefresh,
+                      icon: const Icon(Icons.refresh_rounded),
+                      label: Text(l.refresh),
+                    ),
+                  ],
+                ),
+              ),
+            )
+          else
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(12, 10, 12, 110),
+              sliver: SliverGrid(
+                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: cols,
+                  crossAxisSpacing: 8,
+                  mainAxisSpacing: 8,
+                  childAspectRatio: 0.82,
+                ),
+                delegate: SliverChildBuilderDelegate(
+                  (_, i) => _ProStaggeredItem(
+                    index: i,
+                    child: _ProductCard(product: filtered[i], fmt: fmt, compact: true),
+                  ),
+                  childCount: filtered.length,
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Slim gradient strip: title, live cart summary, scan/refresh.
+class _MobilePosHero extends StatelessWidget {
+  final int products;
+  final VoidCallback? onScanTap;
+  final VoidCallback onRefresh;
+  const _MobilePosHero({
+    required this.products,
+    required this.onScanTap,
+    required this.onRefresh,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final l = L.of(context);
+    final cart = context.watch<CartProvider>();
+    final fmt = NumberFormat('#,###', 'en_US');
+    return Container(
+      margin: const EdgeInsets.fromLTRB(12, 10, 12, 4),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: AppColors.gradHeader,
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: Colors.white.withAlpha(22)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: Colors.white.withAlpha(22),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: const Icon(Icons.point_of_sale_rounded, color: Colors.white, size: 22),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  l.isSw ? 'Kuuza Haraka' : 'Quick Sale',
+                  style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  cart.count == 0
+                      ? '$products ${l.kpiProducts}'
+                      : '${cart.count} ${l.items} • TZS ${fmt.format(cart.total)}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: cart.count == 0 ? Colors.white70 : AppColors.accentBright,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          _RoundAction(icon: Icons.refresh_rounded, onTap: onRefresh),
+        ],
+      ),
+    );
+  }
+}
+
+class _PinnedHeaderDelegate extends SliverPersistentHeaderDelegate {
+  final double height;
+  final Widget child;
+  const _PinnedHeaderDelegate({required this.height, required this.child});
+
+  @override
+  double get minExtent => height;
+  @override
+  double get maxExtent => height;
+
+  @override
+  Widget build(BuildContext context, double shrinkOffset, bool overlapsContent) =>
+      SizedBox.expand(child: child);
+
+  @override
+  bool shouldRebuild(covariant _PinnedHeaderDelegate old) =>
+      old.height != height || old.child != child;
 }

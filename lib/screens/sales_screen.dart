@@ -3,7 +3,9 @@ import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import '../models/sale.dart';
 import '../providers/app_provider.dart';
+import '../services/report_export.dart';
 import '../theme/app_theme.dart';
+import '../widgets/first_run_tutorial.dart';
 import '../l10n/app_l10n.dart';
 import 'transaction_detail_sheet.dart';
 
@@ -22,9 +24,11 @@ class _SalesScreenState extends State<SalesScreen>
   String _filterType = 'all';
   DateTime? _filterDate;
   String _search = '';
+  String _period = 'all';   // all | today | week | month  (mobile chips)
+  String _status = 'all';   // all | paid | debt | pending | voided | offline
+  bool _exporting = false;
   final _searchCtrl = TextEditingController();
   final _fmt = NumberFormat('#,###', 'en_US');
-  final _dateFmt = DateFormat('dd MMM yyyy, HH:mm');
   late final AnimationController _animCtrl;
   late final Animation<double> _fadeAnim;
 
@@ -98,8 +102,57 @@ class _SalesScreenState extends State<SalesScreen>
           s.saleId.toString().contains(_search);
       final matchDate =
           _filterDate == null || _sameDay(s.createdAt, _filterDate!);
-      return matchType && matchSearch && matchDate;
+      final matchPeriod = _inPeriod(s.createdAt);
+      final matchStatus = switch (_status) {
+        'paid' => s.isPaid,
+        'debt' => (s.isUnpaid || s.isPartial) && !s.isVoided,
+        'pending' => s.isPending,
+        'voided' => s.isVoided,
+        'offline' => !s.isSynced,
+        _ => true,
+      };
+      return matchType && matchSearch && matchDate && matchPeriod && matchStatus;
     }).toList();
+  }
+
+  bool _inPeriod(String rawDate) {
+    if (_period == 'all') return true;
+    final dt = DateTime.tryParse(rawDate);
+    if (dt == null) return false;
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final d = DateTime(dt.year, dt.month, dt.day);
+    return switch (_period) {
+      'today' => d == today,
+      'week' => !d.isBefore(today.subtract(Duration(days: today.weekday - 1))),
+      'month' => d.year == now.year && d.month == now.month,
+      _ => true,
+    };
+  }
+
+  Future<void> _exportExcel() async {
+    final app = context.read<AppProvider>();
+    final biz = app.selectedBusiness;
+    if (biz == null || _filtered.isEmpty) return;
+    setState(() => _exporting = true);
+    try {
+      await ReportExport.exportSalesList(
+        sales: _filtered,
+        businessName: biz.receiptHeader.isNotEmpty ? biz.receiptHeader : biz.businessName,
+        label: _period == 'all' ? 'zote' : _period,
+      );
+      if (mounted) {
+        AppNotification.show(context, 'Excel imetengenezwa', AppColors.accent,
+            icon: Icons.check_circle_rounded);
+      }
+    } catch (e) {
+      if (mounted) {
+        AppNotification.show(context, 'Export imeshindwa: $e', AppColors.chartRed,
+            icon: Icons.error_rounded);
+      }
+    } finally {
+      if (mounted) setState(() => _exporting = false);
+    }
   }
 
   bool _sameDay(String rawDate, DateTime target) {
@@ -314,6 +367,7 @@ class _SalesScreenState extends State<SalesScreen>
                             fontSize: 11,
                           ),
                         ),
+                      if (!s.isSynced) _SyncBadge(sale: s),
                     ],
                   ),
                 ),
@@ -407,12 +461,18 @@ class _SalesScreenState extends State<SalesScreen>
         child: Column(
           children: [
             _mobileHeader(l, filtered.length),
-            _buildToolbar(desktop: false, l: l),
-            _SalesHeroSummary(
-              filtered: filtered,
-              fmt: _fmt,
-              compact: _compact,
-              desktop: false,
+            TutorialTarget(
+              id: 'sales_toolbar',
+              child: _mobileFilters(l),
+            ),
+            TutorialTarget(
+              id: 'sales_summary',
+              child: _SalesHeroSummary(
+                filtered: filtered,
+                fmt: _fmt,
+                compact: _compact,
+                desktop: false,
+              ),
             ),
             Expanded(
               child: _loading
@@ -432,9 +492,9 @@ class _SalesScreenState extends State<SalesScreen>
                                 physics: const AlwaysScrollableScrollPhysics(),
                                 padding: const EdgeInsets.fromLTRB(
                                   12,
-                                  8,
+                                  4,
                                   12,
-                                  130,
+                                  100,
                                 ),
                                 itemCount: grouped.length,
                                 itemBuilder: (ctx, i) {
@@ -473,20 +533,24 @@ class _SalesScreenState extends State<SalesScreen>
                                       ),
                                     );
                                   }
-                                  // ── Sale card ──────────────────────────────────
+                                  // ── Sale row (compact) ─────────────────────────
                                   final sale = item as Sale;
-                                  return Padding(
-                                    padding: const EdgeInsets.only(bottom: 8),
-                                    child: _SaleCard(
+                                  final row = Padding(
+                                    padding: const EdgeInsets.only(bottom: 6),
+                                    child: _SaleRow(
                                       sale: sale,
                                       fmt: _fmt,
-                                      dateFmt: _dateFmt,
                                       statusColor: _statusColor(sale),
                                       statusLabel: _statusLabel(sale, l),
                                       typeLabel: _typeLabel(sale.saleType, l),
                                       onTap: () => _openDetail(sale),
                                     ),
                                   );
+                                  // first sale is the tutorial anchor
+                                  final firstSaleIdx = grouped.indexWhere((e) => e is Sale);
+                                  return i == firstSaleIdx
+                                      ? TutorialTarget(id: 'sales_list', child: row)
+                                      : row;
                                 },
                               ),
                       ),
@@ -506,40 +570,40 @@ class _SalesScreenState extends State<SalesScreen>
         begin: Alignment.topLeft,
         end: Alignment.bottomRight,
       ),
-      borderRadius: BorderRadius.only(
-        bottomLeft: Radius.circular(28),
-        bottomRight: Radius.circular(28),
-      ),
     ),
     child: SafeArea(
       bottom: false,
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(8, 4, 16, 16),
+        padding: const EdgeInsets.fromLTRB(16, 8, 4, 10),
         child: Row(
           children: [
-            IconButton(
-              onPressed:
-                  widget.onBack ?? () => Navigator.of(context).maybePop(),
-              icon: const Icon(Icons.arrow_back_rounded, color: Colors.white),
-            ),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    l.salesHistory,
+                    l.sales,
                     style: const TextStyle(
                       color: Colors.white,
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
+                      fontSize: 20,
+                      fontWeight: FontWeight.w800,
                     ),
                   ),
                   Text(
                     '$count ${l.allSales.toLowerCase()}',
-                    style: const TextStyle(color: Colors.white70, fontSize: 11),
+                    style: const TextStyle(color: Colors.white70, fontSize: 12),
                   ),
                 ],
               ),
+            ),
+            IconButton(
+              tooltip: 'Export Excel',
+              onPressed: _exporting || filteredIsEmpty ? null : _exportExcel,
+              icon: _exporting
+                  ? const SizedBox(
+                      width: 18, height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                  : const Icon(Icons.table_view_rounded, color: Colors.white),
             ),
             IconButton(
               onPressed: _loadSales,
@@ -550,6 +614,100 @@ class _SalesScreenState extends State<SalesScreen>
       ),
     ),
   );
+
+  bool get filteredIsEmpty => _filtered.isEmpty;
+
+  /// Search + period chips + status chips (phone).
+  Widget _mobileFilters(L l) {
+    Widget chip(String label, bool sel, VoidCallback onTap, {Color? color}) => Padding(
+      padding: const EdgeInsets.only(right: 6),
+      child: ChoiceChip(
+        label: Text(label,
+            style: TextStyle(
+              color: sel ? Colors.white : AppColors.textMuted,
+              fontSize: 12,
+              fontWeight: sel ? FontWeight.w700 : FontWeight.w500,
+            )),
+        selected: sel,
+        showCheckmark: false,
+        selectedColor: color ?? AppColors.primary,
+        backgroundColor: AppColors.bgCard,
+        side: BorderSide(color: sel ? (color ?? AppColors.primary) : AppColors.border),
+        visualDensity: VisualDensity.compact,
+        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        padding: const EdgeInsets.symmetric(horizontal: 10),
+        onSelected: (_) => onTap(),
+      ),
+    );
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
+          child: SizedBox(
+            height: 42,
+            child: TextField(
+              style: TextStyle(color: AppColors.textWhite, fontSize: 14),
+              decoration: InputDecoration(
+                hintText: l.isSw ? 'Tafuta mteja au namba ya risiti' : 'Search customer or receipt no.',
+                hintStyle: TextStyle(color: AppColors.textMuted, fontSize: 13),
+                prefixIcon: Icon(Icons.search_rounded, color: AppColors.textMuted, size: 20),
+                isDense: true,
+                filled: true,
+                fillColor: AppColors.bgCard,
+                contentPadding: const EdgeInsets.symmetric(vertical: 10),
+                border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide(color: AppColors.border)),
+                enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide(color: AppColors.border)),
+                focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(color: AppColors.primary, width: 1.5)),
+              ),
+              onChanged: (v) => setState(() => _search = v),
+            ),
+          ),
+        ),
+        SizedBox(
+          height: 44,
+          child: ListView(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+            children: [
+              chip('Zote', _period == 'all' && _filterDate == null, () => setState(() { _period = 'all'; _filterDate = null; })),
+              chip('Leo', _period == 'today', () => setState(() { _period = 'today'; _filterDate = null; })),
+              chip('Wiki hii', _period == 'week', () => setState(() { _period = 'week'; _filterDate = null; })),
+              chip('Mwezi huu', _period == 'month', () => setState(() { _period = 'month'; _filterDate = null; })),
+              chip(
+                _filterDate == null ? 'Tarehe…' : DateFormat('dd MMM').format(_filterDate!),
+                _filterDate != null,
+                () async {
+                  await _pickFilterDate();
+                  if (_filterDate != null) setState(() => _period = 'all');
+                },
+              ),
+            ],
+          ),
+        ),
+        SizedBox(
+          height: 40,
+          child: ListView(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),
+            children: [
+              chip('Hali: zote', _status == 'all', () => setState(() => _status = 'all')),
+              chip('Zimelipwa', _status == 'paid', () => setState(() => _status = 'paid'), color: AppColors.accentDk),
+              chip('Madeni', _status == 'debt', () => setState(() => _status = 'debt'), color: AppColors.chartRed),
+              chip('Zinasubiri', _status == 'pending', () => setState(() => _status = 'pending'), color: AppColors.chartOrange),
+              chip('Zilizofutwa', _status == 'voided', () => setState(() => _status = 'voided'), color: AppColors.chartGray),
+              chip('Offline', _status == 'offline', () => setState(() => _status = 'offline'), color: Colors.orange),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
 
   // ── Shared widgets ──────────────────────────────────────────────────────────
   Widget _buildToolbar({required bool desktop, required L l}) {
@@ -844,6 +1002,54 @@ class _SalesHeroSummary extends StatelessWidget {
         .where((s) => s.isPending || s.isPartial || s.isUnpaid)
         .length;
 
+    if (!desktop) {
+      // Phone: one compact stats strip – the screen title is already above.
+      Widget stat(IconData icon, String label, String value, Color color) => Expanded(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(children: [
+              Icon(icon, size: 12, color: color),
+              const SizedBox(width: 4),
+              Flexible(
+                child: Text(label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(color: AppColors.textMuted, fontSize: 10.5)),
+              ),
+            ]),
+            const SizedBox(height: 3),
+            Text(value,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(color: color, fontWeight: FontWeight.w800, fontSize: 14)),
+          ],
+        ),
+      );
+      return Container(
+        margin: const EdgeInsets.fromLTRB(12, 8, 12, 2),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(
+          color: AppColors.bgCard,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: AppColors.border),
+        ),
+        child: Row(
+          children: [
+            stat(Icons.payments_rounded, l.income, 'TZS ${compact(paid)}', AppColors.accent),
+            Container(width: 1, height: 28, color: AppColors.border),
+            const SizedBox(width: 10),
+            stat(Icons.warning_amber_rounded, l.debts, 'TZS ${compact(debt)}',
+                debt > 0 ? AppColors.chartRed : AppColors.textMuted),
+            Container(width: 1, height: 28, color: AppColors.border),
+            const SizedBox(width: 10),
+            stat(Icons.pending_actions_rounded, l.salePending, '$pending',
+                pending > 0 ? AppColors.chartOrange : AppColors.textMuted),
+          ],
+        ),
+      );
+    }
+
     return TweenAnimationBuilder<double>(
       tween: Tween(begin: 0, end: 1),
       duration: const Duration(milliseconds: 520),
@@ -985,19 +1191,55 @@ class _MiniPill extends StatelessWidget {
 // ─────────────────────────────────────────────────────────────────────────────
 // Mobile Sale Card — clean professional design
 // ─────────────────────────────────────────────────────────────────────────────
-class _SaleCard extends StatelessWidget {
+/// "Offline – inasubiri sync" / "Imekataliwa" chip for sales made offline.
+class _SyncBadge extends StatelessWidget {
+  final Sale sale;
+  const _SyncBadge({required this.sale});
+
+  @override
+  Widget build(BuildContext context) {
+    final failed = sale.isSyncFailed;
+    final color = failed ? Colors.redAccent : Colors.orange;
+    final label = failed
+        ? 'Imekataliwa: ${sale.syncError.isNotEmpty ? sale.syncError : "angalia sync"}'
+        : 'Offline · inasubiri sync';
+    return Container(
+      margin: const EdgeInsets.only(top: 2),
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+      decoration: BoxDecoration(
+        color: color.withAlpha(28),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withAlpha(90)),
+      ),
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
+        Icon(failed ? Icons.error_outline_rounded : Icons.cloud_off_rounded,
+            size: 11, color: color),
+        const SizedBox(width: 4),
+        Flexible(
+          child: Text(label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                  color: color, fontSize: 10, fontWeight: FontWeight.bold)),
+        ),
+      ]),
+    );
+  }
+}
+
+
+/// Compact one-line sale row for phones: avatar · name + meta · amount/status.
+class _SaleRow extends StatelessWidget {
   final Sale sale;
   final NumberFormat fmt;
-  final DateFormat dateFmt;
   final Color statusColor;
   final String statusLabel;
   final String typeLabel;
   final VoidCallback? onTap;
 
-  const _SaleCard({
+  const _SaleRow({
     required this.sale,
     required this.fmt,
-    required this.dateFmt,
     required this.statusColor,
     required this.statusLabel,
     required this.typeLabel,
@@ -1005,9 +1247,8 @@ class _SaleCard extends StatelessWidget {
   });
 
   String get _initials {
-    final name = sale.customerName.trim();
-    if (name.isEmpty) return '?';
-    final words = name.split(' ').where((w) => w.isNotEmpty).toList();
+    final words = sale.customerName.trim().split(' ').where((w) => w.isNotEmpty).toList();
+    if (words.isEmpty) return '?';
     if (words.length == 1) return words[0][0].toUpperCase();
     return '${words[0][0]}${words[1][0]}'.toUpperCase();
   }
@@ -1018,219 +1259,101 @@ class _SaleCard extends StatelessWidget {
     try {
       dt = DateTime.parse(sale.createdAt);
     } catch (_) {}
+    final time = dt != null ? DateFormat('HH:mm').format(dt) : '';
+    final name = sale.customerName.isNotEmpty ? sale.customerName : '—';
+    final voided = sale.isVoided;
 
     return Material(
-      color: Colors.transparent,
+      color: AppColors.bgCard,
+      borderRadius: BorderRadius.circular(14),
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(14),
         child: Container(
-          padding: const EdgeInsets.all(14),
+          padding: const EdgeInsets.fromLTRB(10, 10, 12, 10),
           decoration: BoxDecoration(
-            color: AppColors.bgCard,
-            borderRadius: BorderRadius.circular(18),
+            borderRadius: BorderRadius.circular(14),
             border: Border.all(
-              color: sale.hasBalance
-                  ? AppColors.chartRed.withAlpha(55)
-                  : AppColors.border,
+              color: !sale.isSynced ? Colors.orange.withAlpha(120) : AppColors.border,
             ),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withAlpha(25),
-                blurRadius: 12,
-                offset: const Offset(0, 5),
-              ),
-            ],
           ),
           child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // ── Avatar circle ──────────────────────────────────────────────
               Container(
-                width: 44,
-                height: 44,
+                width: 38,
+                height: 38,
                 decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [
-                      statusColor.withAlpha(160),
-                      statusColor.withAlpha(90),
-                    ],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                  ),
+                  color: statusColor.withAlpha(30),
                   shape: BoxShape.circle,
+                  border: Border.all(color: statusColor.withAlpha(90)),
                 ),
-                child: Center(
-                  child: Text(
-                    _initials,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 15,
-                    ),
-                  ),
+                alignment: Alignment.center,
+                child: Text(
+                  _initials,
+                  style: TextStyle(color: statusColor, fontWeight: FontWeight.w800, fontSize: 13),
                 ),
               ),
-              const SizedBox(width: 12),
-              // ── Main content ───────────────────────────────────────────────
+              const SizedBox(width: 10),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            sale.customerName.isNotEmpty
-                                ? sale.customerName
-                                : L.of(context).isSw
-                                ? 'Mteja Asiyejulikana'
-                                : 'Unknown Customer',
-                            style: TextStyle(
-                              color: AppColors.textWhite,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 15,
-                            ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                        // Status badge
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 9,
-                            vertical: 4,
-                          ),
-                          decoration: BoxDecoration(
-                            color: statusColor.withAlpha(28),
-                            borderRadius: BorderRadius.circular(20),
-                            border: Border.all(
-                              color: statusColor.withAlpha(90),
-                            ),
-                          ),
-                          child: Text(
-                            statusLabel,
-                            style: TextStyle(
-                              color: statusColor,
-                              fontSize: 10,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 5),
-                    Row(
-                      children: [
-                        Icon(
-                          Icons.receipt_long_rounded,
-                          size: 12,
-                          color: AppColors.textMuted,
-                        ),
-                        const SizedBox(width: 4),
-                        Text(
-                          '${sale.saleNo.isNotEmpty ? sale.saleNo : "#${sale.saleId}"}  ·  '
-                          '${sale.itemCount} ${L.of(context).items}  ·  $typeLabel',
-                          style: TextStyle(
-                            color: AppColors.textMuted,
-                            fontSize: 11,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ],
-                    ),
-                    if (dt != null) ...[
-                      const SizedBox(height: 2),
-                      Row(
-                        children: [
-                          Icon(
-                            Icons.access_time_rounded,
-                            size: 12,
-                            color: AppColors.textMuted,
-                          ),
-                          const SizedBox(width: 4),
-                          Text(
-                            DateFormat('HH:mm').format(dt),
-                            style: TextStyle(
-                              color: AppColors.textMuted,
-                              fontSize: 11,
-                            ),
-                          ),
-                        ],
+                    Text(
+                      name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: voided ? AppColors.textMuted : AppColors.textWhite,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 13.5,
+                        decoration: voided ? TextDecoration.lineThrough : null,
                       ),
-                    ],
-                    const SizedBox(height: 10),
-                    // ── Amounts row ──────────────────────────────────────────────
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                L.of(context).totalLabel,
-                                style: TextStyle(
-                                  color: AppColors.textMuted,
-                                  fontSize: 10,
-                                ),
-                              ),
-                              Text(
-                                'TZS ${fmt.format(sale.totalAmount)}',
-                                style: TextStyle(
-                                  color: AppColors.textWhite,
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 15,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        if (sale.hasBalance) ...[
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 10,
-                              vertical: 6,
-                            ),
-                            decoration: BoxDecoration(
-                              color: AppColors.chartRed.withAlpha(20),
-                              borderRadius: BorderRadius.circular(10),
-                              border: Border.all(
-                                color: AppColors.chartRed.withAlpha(70),
-                              ),
-                            ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.end,
-                              children: [
-                                Text(
-                                  L.of(context).debt,
-                                  style: const TextStyle(
-                                    color: AppColors.chartRed,
-                                    fontSize: 10,
-                                  ),
-                                ),
-                                Text(
-                                  'TZS ${fmt.format(sale.balanceAmount)}',
-                                  style: const TextStyle(
-                                    color: AppColors.chartRed,
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 13,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                        const SizedBox(width: 8),
-                        Icon(
-                          Icons.chevron_right_rounded,
-                          color: AppColors.textMuted,
-                          size: 18,
-                        ),
-                      ],
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      [
+                        if (time.isNotEmpty) time,
+                        '${sale.itemCount} ${L.of(context).items}',
+                        typeLabel,
+                        if (!sale.isSynced)
+                          sale.isSyncFailed ? '⚠ sync' : '☁ offline',
+                      ].join(' · '),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: !sale.isSynced ? Colors.orange : AppColors.textMuted,
+                        fontSize: 11,
+                      ),
                     ),
                   ],
                 ),
+              ),
+              const SizedBox(width: 8),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(
+                    fmt.format(sale.totalAmount),
+                    style: TextStyle(
+                      color: voided ? AppColors.textMuted : AppColors.textWhite,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 14,
+                      decoration: voided ? TextDecoration.lineThrough : null,
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: statusColor.withAlpha(28),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      statusLabel,
+                      style: TextStyle(color: statusColor, fontSize: 9.5, fontWeight: FontWeight.w800),
+                    ),
+                  ),
+                ],
               ),
             ],
           ),

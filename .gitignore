@@ -11,6 +11,23 @@
 .svn/
 .swiftpm/
 migrate_working_dir/
+*.zip
+*.xlsx
+*.apk
+*.aab
+*.dill
+*.pdb
+*.so
+*.dll
+
+# Custom Project Ignores
+.claude/
+.codex-tmp/
+output/
+outputs/
+tmp/
+node_modules/
+**/node_modules/
 
 # IntelliJ related
 *.iml
@@ -18,24 +35,26 @@ migrate_working_dir/
 *.iws
 .idea/
 
-# The .vscode folder contains launch configuration and tasks you configure in
-# VS Code which you may wish to be included in version control, so this line
-# is commented out by default.
-#.vscode/
-
 # Flutter/Dart/Pub related
+**/doc/api/
+**/.dart_tool/
+**/.flutter-plugins
+**/.flutter-plugins-dependencies
+**/.pub-cache/
+**/.pub/
+**/build/
+**/coverage/
+**/.gradle/
+
+# Android specific
+**/android/app/debug/
+**/android/app/profile/
+**/android/app/release/
+**/android/.gradle/
+key.properties
 *.jks
 *.keystore
 *.pem
-key.properties
-**/doc/api/
-**/ios/Flutter/.last_build_id
-.dart_tool/
-.flutter-plugins-dependencies
-.pub-cache/
-.pub/
-/build/
-/coverage/
 
 # Symbolication related
 app.*.symbols
@@ -43,16 +62,10 @@ app.*.symbols
 # Obfuscation related
 app.*.map.json
 
-# Android Studio will place build artifacts here
-/android/app/debug
-/android/app/profile
-/android/app/release
+# Server mirror (downloaded PHP for patching) & deploy secrets
+server_mirror/
+*.duka_ftp.env
 
-# Custom ignores
-*.xlsx
-*.zip
-.claude/
-.codex-tmp/
-output/
-outputs/
-tmp/
+# Python tool cache
+__pycache__/
+tools/__pycache__/

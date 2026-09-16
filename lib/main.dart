@@ -4,6 +4,9 @@ import 'providers/app_provider.dart';
 import 'providers/cart_provider.dart';
 import 'providers/theme_provider.dart';
 import 'services/storage_service.dart';
+import 'services/local_db.dart';
+import 'services/connectivity_service.dart';
+import 'services/sync_service.dart';
 import 'theme/app_theme.dart';
 import 'screens/login_screen.dart';
 import 'screens/business_select_screen.dart';
@@ -15,6 +18,18 @@ import 'widgets/brand_logo.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await StorageService.init();
+  // Offline-first: local SQLite cache + connectivity watcher.
+  // Never let a storage problem stop the app – fall back to online-only.
+  try {
+    await LocalDb.instance.init();
+  } catch (e) {
+    debugPrint('LocalDb init failed (online-only mode): $e');
+  }
+  try {
+    await ConnectivityService.instance.init();
+  } catch (e) {
+    debugPrint('Connectivity init failed: $e');
+  }
   // Load theme preference before first frame so correct palette is active
   final tp = ThemeProvider();
   await tp.load();
@@ -32,6 +47,8 @@ class DonelPOSApp extends StatelessWidget {
         ChangeNotifierProvider.value(value: themeProvider),
         ChangeNotifierProvider(create: (_) => AppProvider()),
         ChangeNotifierProvider(create: (_) => CartProvider()),
+        ChangeNotifierProvider.value(value: ConnectivityService.instance),
+        ChangeNotifierProvider.value(value: SyncService.instance),
       ],
       child: Consumer<ThemeProvider>(
         builder: (ctx, theme, _) => MaterialApp(
@@ -129,7 +146,7 @@ class _SplashScreenState extends State<_SplashScreen>
       body: Container(
         decoration: const BoxDecoration(
           gradient: LinearGradient(
-            colors: [Color(0xFF06130F), Color(0xFF0B2A24), Color(0xFF082033)],
+            colors: [Color(0xFF06130F), Color(0xFF0B2A24), Color(0xFF0E3B2E)],
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
           ),

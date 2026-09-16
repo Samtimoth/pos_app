@@ -278,7 +278,7 @@ class _TransactionDetailSheetState extends State<TransactionDetailSheet>
   }
 
   // ── Actions ──────────────────────────────────────────────────────────────
-  Future<void> _doAction(String action, {double? amount}) async {
+  Future<void> _doAction(String action, {double? amount, String? note}) async {
     final app = context.read<AppProvider>();
     if (app.api == null) return;
     setState(() => _processing = true);
@@ -287,10 +287,12 @@ class _TransactionDetailSheetState extends State<TransactionDetailSheet>
         _sale.saleId,
         action,
         amount: amount,
+        note: note,
       );
       if (!mounted) return;
       if (res['success'] == true) {
-        _snack(res['message'] as String? ?? '✅ Imefanikiwa', AppColors.accent);
+        _snack(res['message'] as String? ?? '✅ Imefanikiwa',
+            res['offline'] == true ? Colors.orange : AppColors.accent);
         Navigator.pop(context);
         widget.onActionDone();
       } else {
@@ -492,6 +494,7 @@ class _TransactionDetailSheetState extends State<TransactionDetailSheet>
     );
     // Read values BEFORE disposing controllers
     final amtText = amtCtrl.text;
+    final noteText = noteCtrl.text.trim();
     amtCtrl.dispose();
     noteCtrl.dispose();
     if (ok == true && mounted) {
@@ -500,12 +503,17 @@ class _TransactionDetailSheetState extends State<TransactionDetailSheet>
         _snack(l.enterPayAmt, Colors.orange);
         return;
       }
-      await _doAction('record_payment', amount: amt);
+      await _doAction('record_payment', amount: amt, note: noteText);
     }
   }
 
   Future<void> _showVoidConfirm() async {
     final l = L.of(context);
+    // ── Role check (Hatua 1) ──
+    if (context.read<AppProvider>().user?.canVoidSales != true) {
+      _snack(l.isSw ? 'Huna ruhusa ya kuvunja mauzo' : 'You cannot void sales', Colors.redAccent);
+      return;
+    }
     final ok = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
@@ -1275,14 +1283,17 @@ class _TransactionDetailSheetState extends State<TransactionDetailSheet>
       );
     }
 
-    btns.add(
-      _actionBtn(
-        label: l.voidSale,
-        icon: Icons.delete_outline_rounded,
-        color: Colors.redAccent,
-        onTap: _showVoidConfirm,
-      ),
-    );
+    // ── Role check (Hatua 1): Cashier hawezi kuvunja mauzo ──
+    if (context.read<AppProvider>().user?.canVoidSales == true) {
+      btns.add(
+        _actionBtn(
+          label: l.voidSale,
+          icon: Icons.delete_outline_rounded,
+          color: Colors.redAccent,
+          onTap: _showVoidConfirm,
+        ),
+      );
+    }
 
     return Wrap(spacing: 8, runSpacing: 8, children: btns);
   }

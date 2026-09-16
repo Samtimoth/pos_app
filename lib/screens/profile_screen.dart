@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/app_provider.dart';
 import '../theme/app_theme.dart';
+import '../widgets/first_run_tutorial.dart';
 import 'payment_screen.dart';
 import 'manage_screen.dart';
 
@@ -239,6 +240,20 @@ class _ProfileScreenState extends State<ProfileScreen>
         subtitle: 'Ongeza, badilisha cheo, ondoa wafanyakazi',
         onTap: () => Navigator.of(context).push(
             MaterialPageRoute(builder: (_) => const ManageScreen(initialTab: 2))),
+      ),
+      const SizedBox(height: 10),
+      _linkRow(
+        icon: Icons.school_rounded,
+        color: AppColors.primaryLt,
+        title: 'Onyesha mafunzo tena',
+        subtitle: 'Maelekezo ya hatua kwa hatua kwenye kila screen',
+        onTap: () async {
+          await FirstRunTutorial.resetAll();
+          if (!mounted) return;
+          AppNotification.show(context, 'Mafunzo yataonekana tena kwenye kila screen',
+              AppColors.accent, icon: Icons.check_circle_rounded);
+          Navigator.of(context).pop();
+        },
       ),
     ]),
   );
