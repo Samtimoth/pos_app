@@ -53,7 +53,8 @@ Ukaguzi kamili (audit) ulifanyika 2026-09-14: features 140 zilichunguliwa — ap
 
 ## Hatua 4 — P1: 🟡 IMEANZA (siyo P0, lakini kazi imeanza kabla ya wakati)
 - ✅ **Punguzo la jumla + idhini ya meneja (2026-09-16)**: `DiscountField` widget kwenye POS checkout (imezimwa kwa default), `create_sale.php` inakubali `overall_discount`; punguzo linalozidi 10% ya subtotal linahitaji `manager_pin` sahihi (kutumia `helpers/manager_pin.php` ile ile ya Hatua 3) isipokuwa mtumaji ni Owner/Admin/Manager/SuperAdmin. Grand total (baada ya punguzo) inatumika kwa split payment target + risiti (Total/Paid/Change) — si `cart.total` ya subtotal. Inafanya kazi offline (discount+PIN zinapitia sync queue). Deployed + smoke-tested live, push (commit 65d1a93).
-- ❌ Bado: register/shift (fungua/funga, expected vs actual), VAT settings + risiti rasmi, hold/resume sale, receipt template designer (logo, QR, 58/80mm, A4).
+- ✅ **Hold/Resume Sale (2026-09-16)**: `HeldSalesProvider` (local-only, kv_cache — si sale halisi mpaka i-checkout, hivyo hakuna sababu ya kuisync na server). Kitufe "Weka Kando" (Hold) na "Mauzo Yaliyowekwa Kando" (badge yenye idadi) kwenye POS checkout (desktop + simu). `CartItem` sasa ina `toJson()/fromJson()`. Held sales zinabaki baada ya app kufungwa, zinafutwa wakati wa logout (pamoja na kv_cache nyingine). `flutter analyze` 0, `flutter test` 27/27 (ilibidi kurekebisha layout overflow ndogo kwenye desktop panel + kuongeza HeldSalesProvider kwenye screenshot test's provider tree). Hakuna backend/DB. Push (commit 3065d75).
+- ❌ Bado: register/shift (fungua/funga, expected vs actual), VAT settings + risiti rasmi, receipt template designer (logo, QR, 58/80mm, A4).
 
 ## FTP / Deploy
 - Credentials: `%USERPROFILE%\.duka_ftp.env` (FTP_HOST=ftp.dadcas.com, API dir `/pos/api`, web dir `/pos/app`) — **nje ya repo, usi-print**.
@@ -67,7 +68,7 @@ Ukaguzi kamili (audit) ulifanyika 2026-09-14: features 140 zilichunguliwa — ap
 2. **Hatua 3**: ~~batches mbili → moja~~ ✅, ~~FEFO~~ ✅, ~~approval ya adjustments (Manager PIN)~~ ✅ (zote 2026-09-16). **Hatua 3 kwa vitendo IMEKAMILIKA.** Kimebaki tu vitu visivyo P0: StockService moja (usanifu, si bug), opening backfill kwa bidhaa za zamani (haijathibitishwa).
 3. **Usalama wa ziada (Hatua 1 residuals)**: badilisha DB/FTP passwords (za sasa zimeonekana kwenye chat — dharura); ~~backup ya usiku~~ ✅ script tayari (`db_backup.php`) — **inasubiri tu mtumiaji aweke Cron Job kwenye cPanel** (tazama Hatua 1 hapo juu kwa command); offsite copy bado haijapangwa.
 4. Kabla ya 2026-10-31: hakikisha app zote zimetoka na token auth, kisha weka `AUTH_ALLOW_LEGACY = false`.
-5. **Hatua 4 (P1) — imeanza**: ~~discount + manager PIN~~ ✅ (2026-09-16). Kimebaki: register/shift, VAT settings+risiti, hold/resume sale, receipt template designer.
+5. **Hatua 4 (P1) — imeanza**: ~~discount + manager PIN~~ ✅, ~~hold/resume sale~~ ✅ (zote 2026-09-16). Kimebaki: register/shift, VAT settings+risiti, receipt template designer.
 
 # Maamuzi muhimu (yaliyokubaliwa)
 
@@ -78,6 +79,7 @@ Ukaguzi kamili (audit) ulifanyika 2026-09-14: features 140 zilichunguliwa — ap
 
 # Log (mfululizo wa kazi)
 
+- 2026-09-16 (9): **Hold/Resume Sale** — `held_sales_provider.dart` (local-only, kv_cache), `held_sales_sheet.dart` UI, kitufe "Weka Kando" + badge kwenye POS (desktop+simu). `CartItem.toJson/fromJson` ziliongezwa. Wakati wa kujaribu niligundua overflow ndogo ya layout kwenye desktop panel (320px width) iliyosababishwa na vitufe vipya, na `HeldSalesProvider` ilikosekana kwenye screenshot test's MultiProvider (ilisababisha ProviderNotFoundException iliyoonekana kama overflow kubwa) — zote mbili zimerekebishwa. `flutter analyze` 0, `flutter test` 27/27. Hakuna backend/DB. Push (commit 3065d75).
 - 2026-09-16 (8): **Hatua 4: Punguzo la jumla + idhini ya meneja** — `discount_field.dart` (UI, imezimwa default), `create_sale.php` inakubali `overall_discount` (>10% ya subtotal inahitaji manager_pin, kutumia helpers/manager_pin.php ile ile ya stock write-offs), split payment + risiti sasa zinatumia grand total (baada ya punguzo). `flutter analyze` 0, `flutter test` 27/27, deployed + smoke-tested live, push (commit 65d1a93). Hatua 4 (P1) imeanza kabla ya wakati wake kwa sababu ilikuwa rahisi kutumia miundombinu ya PIN iliyojengwa kwa Hatua 3.
 - 2026-09-16 (7): **Manager PIN approval kwa stock write-offs** — `helpers/manager_pin.php`, `manager_pin.php` endpoint, `manager_pin_dialog.dart` UI, kitufe cha kuweka PIN kwenye Profile, kimeunganishwa kwenye `StockAdjustSheet`. `flutter analyze` 0, `flutter test` 27/27, deployed + smoke-tested live (pin_hash column self-created, no 500s), push (commit a447ab0). **Hatua 3 (Stock ledger) sasa IMEKAMILIKA kwa vitendo** — P0 zote za Hatua 1, 2, na 3 kutoka audit ya 2026-09-14 zimekamilika.
 - 2026-09-16 (6): **Hatua 3: batch tables unified + FEFO** — `helpers/batches.php` (`product_batch_add()`), `add_product.php`/`import_products.php` sasa zinaandika `product_batches` (si `tbl_product_stock_batch` pekee), `create_sale.php`/`get_product_batches.php` zina FEFO order. `add_stock.php` imethibitishwa dead code (haijaguswa). Backend-only, `php -l` zote clean, deployed + smoke-tested live (0 files no 500), push (commit 2a9007b).
