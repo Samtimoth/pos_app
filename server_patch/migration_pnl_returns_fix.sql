@@ -1,0 +1,40 @@
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Marekebisho ya P&L: marejesho (returns) sasa yanapunguza COGS pia.
+-- Hakuna schema mpya — mabadiliko ya PHP (reports.php) tu.
+-- ═══════════════════════════════════════════════════════════════════════════
+
+-- Tatizo lililokutwa (2026-09-17, wakati wa kuuliza "report ya P&L ipo safi?"):
+-- sale_returns.php inapunguza tbl_sales.total_amount moja kwa moja ukirudisha
+-- bidhaa (hivyo `revenue` kwenye P&L tayari ilikuwa sahihi), LAKINI
+-- reports.php's COGS calculation ilikuwa inahesabu gharama ya bidhaa ZOTE
+-- zilizouzwa awali (kutoka tbl_sale_items) bila kutoa gharama ya bidhaa
+-- zilizorudishwa (sale_return_items). Matokeo: baada ya return, faida
+-- iliyoripotiwa (gross/net profit) ilikuwa CHINI kuliko halisi — revenue
+-- ilipungua sahihi lakini cost haikupungua.
+--
+-- Suluhisho: reports.php sasa inahesabu "returned_cogs" (gharama ya bidhaa
+-- zilizorudishwa, kwa kutumia cost_price ile ile iliyotumika kwenye mauzo
+-- asili, au purchase_price ya sasa ikiwa haipo) na kuitoa kwenye COGS kuu —
+-- kwa jumla YOTE (single-range P&L) na kwa mwezi (monthly series).
+--
+-- Muda: returned_cogs inahesabiwa kwa TAREHE YA MAUZO ASILI (si tarehe ya
+-- return yenyewe) — sambamba na jinsi revenue tayari inavyofanya kazi
+-- (kwa sababu return inabadilisha tbl_sales.total_amount papo hapo, bila
+-- kubadilisha created_at). Kama mauzo yalifanyika Agosti na kurudishwa
+-- Septemba, marekebisho yote mawili (revenue na cogs) yanaonekana kwenye
+-- ripoti ya Agosti.
+--
+-- HAIJATATULIWA (kikwazo cha awali, si kipya leo): COGS kwa ujumla
+-- inatumia tbl_product.purchase_price ya SASA (iliyohifadhiwa kwenye
+-- tbl_sale_items.cost_price wakati wa mauzo) badala ya gharama HALISI ya
+-- batch(es) zilizotumika kupitia FEFO. Ikiwa bei za manunuzi zinabadilika
+-- kati ya batch moja na nyingine, faida iliyoripotiwa ni makadirio, si
+-- hesabu kamili ya batch-level. Kutatua hili kikamilifu kunahitaji
+-- create_sale.php kuandika cost_price kutoka batch halisi iliyotumika na
+-- FIFO/FEFO loop, si kutoka tbl_product.purchase_price — mradi mkubwa
+-- zaidi kwa baadaye, sio dharura (bei za manunuzi za biashara hii bado
+-- hazibadiliki sana kutoka batch moja hadi nyingine).
+--
+-- Reversal: ondoa returned_cogs calculation kwenye reports.php, rudisha
+-- `$cogs = $cogs - $returnedCogs;` kuwa `$cogs = $cogs;` (yaani ondoa
+-- mstari huo). Hakuna data iliyobadilishwa, ni hesabu ya ripoti tu.
