@@ -36,8 +36,9 @@ Ukaguzi kamili (audit) ulifanyika 2026-09-14: features 140 zilichunguliwa — ap
 - ✅ App: `lib/services/crm_api.dart` (listCustomers/getCustomer/saveCustomer/deleteCustomer + offline cache/push) + `customers_screen.dart` (list, debtors, VIP, statement).
 - ✅ POS: kitufe "Chagua mteja" (`_PickCustomerButton`) — inafungua CustomersScreen(pickMode) na kujaza jina/simu kwenye checkout form.
 - ✅ Historia ya malipo: `pay_loan.php` inaandika `tbl_loan_payments` + `get_sale_payments.php` + app `getSalePayments()`.
-- ❌ **Haijaunganiwa kikamilifu**: POS inatuma customer kama string (`TYPE:…|PHONE:…`) kwenye `customer_name` — `customer_id` haihifadhiwi kwenye tbl_sales wakati wa mauzo mapya (picker inajaza fields tu). Backfill ya sales za zamani → customers table (hali isiyojulikana).
-- ❌ **Hakuna bado**: sale_payments (split payment, change kwenye server), returns/refund/exchange + credit notes, Checkout widget moja (desktop `__CartPanel` + simu `_CartSheet` bado mbili).
+- ✅ `customer_id` sasa inahifadhiwa kwenye tbl_sales moja kwa moja (`create_sale.php` inathibitisha id dhidi ya business_id kabla ya kuamini); POS (`pos_screen.dart`) inatuma `customerId`/`customerPhone` badala ya string tu, offline queue (`offline_api_service.dart`/`sync_service.dart`) inatatua temp-id→real-id kabla ya sync.
+- ✅ **Returns/refunds**: `sale_returns.php` (list/create) — inarudisha stock (trigger iliyopo), inahesabu upya total/paid/balance/payment_status ya mauzo, inaonya cash ya kurudisha mteja pale inapohitajika; `sale_return_sheet.dart` UI (item picker + stepper), kitufe "Rudisha Bidhaa" kwenye `transaction_detail_sheet.dart` kikiwa kimefungwa na `user.canReturnSales` (cashier+). Online-only kwa makusudi (haijawekwa kwenye `OfflineApiService`). Imekwisha-deploy + push kwenye PR #1 (commit 3f9861a, 2026-09-16).
+- ❌ **Bado hakuna**: sale_payments table ya split payment ya kweli (Cash+M-Pesa+Bank moja) + change kwenye server, credit notes rasmi (returns zinaonyesha refund lakini hazitoi hati ya "credit note" tofauti), backfill ya sales za zamani → customers, Checkout widget moja (desktop `_CartPanel` + simu `_CartSheet` bado mbili — uamuzi wa makusudi kuahirisha).
 
 ## Hatua 3 — Stock ledger: 🟡 ILIANZA
 - ✅ `stock_movements.php` (stock card + recent movements) + `adjustStock` kwenye crm_api (adjustment sheet kwenye app).
@@ -51,7 +52,7 @@ Ukaguzi kamili (audit) ulifanyika 2026-09-14: features 140 zilichunguliwa — ap
 
 # Kazi inayoendelea / zinazofuata (kwa mpangilio)
 
-1. **Kamilisha Hatua 2 (kilichobaki)**: (a) `customer_id` ihifadhiwe kwenye tbl_sales wakati wa create_sale (picker → customer_id, si string tu); (b) backfill ya sales za zamani → customers; (c) sale_payments table (split + change + historia inayokamilika); (d) returns/refunds + credit note; (e) Checkout widget moja.
+1. **Kamilisha Hatua 2 (kilichobaki)**: (a) ~~customer_id kwenye tbl_sales~~ ✅ imekamilika; (b) backfill ya sales za zamani → customers; (c) sale_payments table (split + change + historia inayokamilika); (d) ~~returns/refunds~~ ✅ imekamilika (credit note rasmi bado haijafanyika); (e) Checkout widget moja.
 2. **Kamilisha Hatua 3**: StockService moja, opening backfill, batches moja, FEFO.
 3. **Usalama wa ziada (Hatua 1 residuals)**: badilisha DB/FTP passwords (za sasa zimeonekana kwenye chat — dharura), backup ya usiku cron + offsite.
 4. Kabla ya 2026-10-31: hakikisha app zote zimetoka na token auth, kisha weka `AUTH_ALLOW_LEGACY = false`.
@@ -65,6 +66,7 @@ Ukaguzi kamili (audit) ulifanyika 2026-09-14: features 140 zilichunguliwa — ap
 
 # Log (mfululizo wa kazi)
 
+- 2026-09-16: `customer_id` imeunganishwa kwenye create_sale (offline+online), na feature ya **Returns/Refunds** kamili (`sale_returns.php` + `sale_return_sheet.dart` + `canReturnSales` permission) imejengwa, ime-deploy live, `flutter analyze` 0 issues, `flutter test` 27/27 ✅, imesukumwa (push) kwenye branch `feature/hatua-1-3-security-crm-stock-ledger` (commit 3f9861a) juu ya PR #1 iliyopo.
 - 2026-09-15: FTP imeunganishwa (deploy.py check ✅, 0 files missing kwenye server); uthibitisho wa code: Hatua 1 ✅ ime-deploy (bootstrap.php/tokens/audit/throttle), Hatua 2 nusura (customers ✅, malipo historia ✅; split/returns/customer_id-on-sale ❌), Hatua 3 ilianza (stock_movements ✅). Memory + skill `project-memory` zimetengenezwa.
 - 2026-09-14: Audit kamili (features 140) + mpango wa phases 1–7; kazi za server endpoints + deploy tools + Jikoni intake ya Excel. (Maelezo ya sessions za kabla ya 2026-09-15 hayapatikani tena; file hii ndiyo kumbukumbu rasmi kuanzia sasa.)
 
