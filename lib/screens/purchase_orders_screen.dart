@@ -245,7 +245,8 @@ class _PoFormSheetState extends State<_PoFormSheet> {
     try {
       final app = context.read<AppProvider>();
       if (app.api == null) return;
-      final raw = await app.api!.getProducts(widget.businessId, search: q.trim());
+      final raw = await app.api!.getProducts(widget.businessId,
+          branchId: app.selectedBranch?.branchId, search: q.trim());
       if (!mounted) return;
       setState(() => _searchResults = raw.map((e) => Product.fromJson(Map<String, dynamic>.from(e as Map))).toList());
     } catch (_) {

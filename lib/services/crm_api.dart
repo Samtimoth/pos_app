@@ -289,6 +289,37 @@ class CrmApi {
       });
 
   // ═══════════════════════════════════════════════════════════════════════
+  // Uhamisho wa stock kati ya matawi (Hatua 5) — kila tawi lina bidhaa/stock
+  // yake tofauti sasa (angalia get_products.php/add_product.php branch_id
+  // scoping); hii inahamisha kiasi kutoka tawi moja kwenda lingine.
+  // ═══════════════════════════════════════════════════════════════════════
+  Future<List<Map<String, dynamic>>> listStockTransfers(int businessId, {int? branchId}) async {
+    final r = await _get('stock_transfers.php', {
+      'action': 'list', 'business_id': '$businessId',
+      if (branchId != null) 'branch_id': '$branchId',
+    });
+    return ((r['transfers'] as List?) ?? []).map((e) => Map<String, dynamic>.from(e as Map)).toList();
+  }
+
+  Future<Map<String, dynamic>> getStockTransfer(int businessId, int transferId) =>
+      _get('stock_transfers.php', {'action': 'get', 'business_id': '$businessId', 'transfer_id': '$transferId'});
+
+  Future<Map<String, dynamic>> createStockTransfer({
+    required int businessId,
+    required int fromBranchId,
+    required int toBranchId,
+    required List<Map<String, dynamic>> items,
+    String notes = '',
+  }) {
+    final opId = _uuid.v4();
+    return _post('stock_transfers.php', {
+      'action': 'create', 'business_id': businessId,
+      'from_branch_id': fromBranchId, 'to_branch_id': toBranchId,
+      'items': items, 'notes': notes, 'client_op_id': opId,
+    });
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
   // Stock ledger
   // ═══════════════════════════════════════════════════════════════════════
   Future<List<Map<String, dynamic>>> stockCard(int businessId, int productId) async {
