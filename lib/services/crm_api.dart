@@ -289,6 +289,47 @@ class CrmApi {
       });
 
   // ═══════════════════════════════════════════════════════════════════════
+  // Zamu (Shift/Register, Hatua 4) — kufungua/kufunga zamu na fedha taslimu.
+  // Kufunga kunahesabu "fedha inayotarajiwa" dhidi ya sale_payments/
+  // tbl_expenses za wakati huo — hii ndiyo reconciliation ya Hatua 5.
+  // ═══════════════════════════════════════════════════════════════════════
+  Future<Map<String, dynamic>?> getCurrentShift(int businessId, int userId) async {
+    final r = await _get('shifts.php', {'action': 'current', 'business_id': '$businessId', 'user_id': '$userId'});
+    if (r['success'] != true) return null;
+    return r['shift'] == null ? null : Map<String, dynamic>.from(r['shift'] as Map);
+  }
+
+  Future<List<Map<String, dynamic>>> listShifts(int businessId, {int? branchId, int? userId}) async {
+    final r = await _get('shifts.php', {
+      'action': 'list', 'business_id': '$businessId',
+      if (branchId != null) 'branch_id': '$branchId',
+      if (userId != null) 'user_id': '$userId',
+    });
+    return ((r['shifts'] as List?) ?? []).map((e) => Map<String, dynamic>.from(e as Map)).toList();
+  }
+
+  Future<Map<String, dynamic>> openShift({
+    required int businessId,
+    int? branchId,
+    required int userId,
+    required double openingCash,
+    String openingNotes = '',
+  }) => _post('shifts.php', {
+        'action': 'open', 'business_id': businessId, 'branch_id': ?branchId, 'user_id': userId,
+        'opening_cash': openingCash, 'opening_notes': openingNotes,
+      });
+
+  Future<Map<String, dynamic>> closeShift({
+    required int businessId,
+    required int shiftId,
+    required double closingCash,
+    String closingNotes = '',
+  }) => _post('shifts.php', {
+        'action': 'close', 'business_id': businessId, 'shift_id': shiftId,
+        'closing_cash': closingCash, 'closing_notes': closingNotes,
+      });
+
+  // ═══════════════════════════════════════════════════════════════════════
   // Nukuu ya Bei (Quotation, Hatua 6) — hati ya bei kwa mteja KABLA ya
   // mauzo halisi; haigusi stock wala fedha kabisa.
   // ═══════════════════════════════════════════════════════════════════════

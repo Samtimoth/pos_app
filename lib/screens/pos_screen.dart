@@ -20,10 +20,13 @@ import '../theme/app_theme.dart';
 import '../l10n/app_l10n.dart';
 import '../utils/cat_style.dart';
 import '../providers/held_sales_provider.dart';
+import '../providers/shift_provider.dart';
+import '../services/crm_api.dart';
 import '../widgets/discount_field.dart';
 import '../widgets/first_run_tutorial.dart';
 import '../widgets/held_sales_sheet.dart';
 import '../widgets/manager_pin_dialog.dart';
+import '../widgets/shift_sheet.dart';
 import '../widgets/split_payment_field.dart';
 import 'customers_screen.dart';
 
@@ -1349,6 +1352,62 @@ class _HeldSalesButton extends StatelessWidget {
   }
 }
 
+/// Kitufe cha Zamu (Shift) — kinaonyesha kijani ikiwa zamu iko wazi, kijivu
+/// ikiwa haipo. Kubonyeza kunafungua ShiftSheet (fungua/funga zamu + historia).
+class _ShiftButton extends StatefulWidget {
+  final bool compact;
+  const _ShiftButton({this.compact = false});
+
+  @override
+  State<_ShiftButton> createState() => _ShiftButtonState();
+}
+
+class _ShiftButtonState extends State<_ShiftButton> {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _refresh());
+  }
+
+  Future<void> _refresh() async {
+    if (!mounted) return;
+    final app = context.read<AppProvider>();
+    final url = app.user?.serverUrl;
+    final bizId = app.selectedBusiness?.businessId;
+    final userId = app.user?.userId;
+    if (url == null || bizId == null || userId == null) return;
+    await context.read<ShiftProvider>().refresh(CrmApi(url), bizId, userId);
+  }
+
+  Future<void> _open() async {
+    final changed = await ShiftSheet.show(context);
+    if (changed == true) _refresh();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isOpen = context.watch<ShiftProvider>().isOpen;
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        IconButton(
+          tooltip: isOpen ? 'Zamu iko wazi' : 'Fungua/Funga Zamu',
+          onPressed: _open,
+          icon: Icon(Icons.point_of_sale_rounded, color: isOpen ? AppColors.accent : AppColors.textMuted, size: widget.compact ? 18 : 22),
+          padding: widget.compact ? EdgeInsets.zero : null,
+          constraints: widget.compact ? const BoxConstraints(minWidth: 32, minHeight: 32) : null,
+          visualDensity: widget.compact ? VisualDensity.compact : null,
+        ),
+        if (isOpen)
+          Positioned(
+            right: 4, top: 4,
+            child: Container(width: 8, height: 8, decoration: BoxDecoration(color: AppColors.accent, shape: BoxShape.circle)),
+          ),
+      ],
+    );
+  }
+}
+
 class _TotalCard extends StatelessWidget {
   final NumberFormat fmt;
   final double total;
@@ -1984,6 +2043,8 @@ class _CartPanelState extends State<_CartPanel> {
                   ),
                 ),
                 _HeldSalesButton(onTap: _openHeldSales, compact: true),
+                const SizedBox(width: 2),
+                _ShiftButton(compact: true),
                 if (cart.count > 0)
                   IconButton(
                     tooltip: 'Weka kando',
@@ -2650,6 +2711,8 @@ class _CartSheetState extends State<_CartSheet> {
                     style: TextStyle(color: AppColors.textMuted, fontSize: 12),
                   ),
                   _HeldSalesButton(onTap: _openHeldSales, compact: true),
+                  const SizedBox(width: 2),
+                  _ShiftButton(compact: true),
                   if (cart.count > 0)
                     IconButton(
                       tooltip: 'Weka kando',

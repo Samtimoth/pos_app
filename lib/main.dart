@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import 'providers/app_provider.dart';
 import 'providers/cart_provider.dart';
 import 'providers/held_sales_provider.dart';
+import 'providers/shift_provider.dart';
 import 'providers/theme_provider.dart';
 import 'services/storage_service.dart';
 import 'services/local_db.dart';
@@ -49,6 +50,7 @@ class DonelPOSApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => AppProvider()),
         ChangeNotifierProvider(create: (_) => CartProvider()),
         ChangeNotifierProvider(create: (_) => HeldSalesProvider()),
+        ChangeNotifierProvider(create: (_) => ShiftProvider()),
         ChangeNotifierProvider.value(value: ConnectivityService.instance),
         ChangeNotifierProvider.value(value: SyncService.instance),
       ],
