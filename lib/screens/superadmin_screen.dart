@@ -112,6 +112,8 @@ class _SuperAdminScreenState extends State<SuperAdminScreen>
         ],
         bottom: TabBar(
           controller: _tab,
+          isScrollable: true,
+          tabAlignment: TabAlignment.start,
           labelColor: AppColors.primary,
           unselectedLabelColor: AppColors.textMuted,
           indicatorColor: AppColors.primary,
