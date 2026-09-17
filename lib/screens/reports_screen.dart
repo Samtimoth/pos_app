@@ -1,6 +1,9 @@
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:pdf/pdf.dart';
+import 'package:pdf/widgets.dart' as pw;
+import 'package:printing/printing.dart';
 import 'package:provider/provider.dart';
 
 import '../l10n/app_l10n.dart';
@@ -35,6 +38,7 @@ class _ReportsScreenState extends State<ReportsScreen>
   Map<String, dynamic>? _report;
   Map<String, dynamic>? _cashflow;
   Map<String, dynamic>? _slowStock;
+  String _topProductsCategory = 'Zote';
   bool _loading = true;
   bool _offline = false;
   bool _exporting = false;
@@ -176,6 +180,67 @@ class _ReportsScreenState extends State<ReportsScreen>
     setState(() => _range = _Range.custom);
     _load();
   }
+
+  /// Taarifa rasmi ya PDF ya P&L (Hatua 6: ripoti export ziada) — hati
+  /// ya kuprint/kutuma, mfano kwa benki au mwenye jengo, tofauti na Excel
+  /// (ambayo ni ya kufanyia kazi zaidi).
+  Future<void> _exportPnlPdf() async {
+    final app = context.read<AppProvider>();
+    final biz = app.selectedBusiness;
+    final pnl = _m(_report?['pnl']);
+    final sales = _m(_report?['sales']);
+    if (biz == null || _report == null) return;
+    final businessName = biz.receiptHeader.isNotEmpty ? biz.receiptHeader : biz.businessName;
+    final net = _n(pnl['net_profit']);
+    final gross = _n(pnl['gross_profit']);
+
+    final doc = pw.Document();
+    doc.addPage(
+      pw.Page(
+        pageFormat: PdfPageFormat.a4,
+        build: (ctx) => pw.Column(
+          crossAxisAlignment: pw.CrossAxisAlignment.stretch,
+          children: [
+            pw.Center(child: pw.Text(businessName.toUpperCase(), style: pw.TextStyle(fontSize: 16, fontWeight: pw.FontWeight.bold))),
+            pw.Center(child: pw.Text('Taarifa ya Faida na Hasara / Profit & Loss Statement', style: const pw.TextStyle(fontSize: 10))),
+            pw.SizedBox(height: 4),
+            pw.Center(child: pw.Text('Kipindi: $_fromStr hadi $_toStr', style: const pw.TextStyle(fontSize: 9))),
+            pw.SizedBox(height: 16),
+            _pnlPdfRow('Mauzo (jumla)', pnl['revenue'], bold: true),
+            _pnlPdfRow('   Pesa iliyopokelewa', sales['collected'], muted: true),
+            _pnlPdfRow('   Madeni ya wateja', sales['outstanding'], muted: true),
+            _pnlPdfRow('(−) Gharama ya bidhaa (COGS)', pnl['cogs']),
+            pw.Divider(),
+            _pnlPdfRow('= Faida Ghafi (Gross Profit)', gross, bold: true,
+                trailing: '${_fmtD.format(_n(pnl['gross_margin_pct']))}%'),
+            _pnlPdfRow('(−) Matumizi', pnl['expenses']),
+            pw.Divider(),
+            _pnlPdfRow('= Faida Halisi (Net Profit)', net, bold: true,
+                trailing: '${_fmtD.format(_n(pnl['net_margin_pct']))}%'),
+            pw.SizedBox(height: 20),
+            pw.Text('Imetengenezwa: ${DateFormat('dd MMM yyyy, HH:mm').format(DateTime.now())}',
+                style: const pw.TextStyle(fontSize: 8, color: PdfColors.grey600)),
+          ],
+        ),
+      ),
+    );
+    await Printing.layoutPdf(onLayout: (_) => doc.save());
+  }
+
+  pw.Widget _pnlPdfRow(String label, dynamic value, {bool bold = false, bool muted = false, String? trailing}) => pw.Padding(
+        padding: const pw.EdgeInsets.symmetric(vertical: 3),
+        child: pw.Row(children: [
+          pw.Expanded(
+            child: pw.Text(label, style: pw.TextStyle(
+                fontSize: bold ? 12 : 10, fontWeight: bold ? pw.FontWeight.bold : pw.FontWeight.normal,
+                color: muted ? PdfColors.grey600 : PdfColors.black)),
+          ),
+          if (trailing != null) pw.Padding(padding: const pw.EdgeInsets.only(right: 8), child: pw.Text(trailing, style: const pw.TextStyle(fontSize: 9, color: PdfColors.grey600))),
+          pw.Text('TZS ${_fmt.format(_n(value))}', style: pw.TextStyle(
+              fontSize: bold ? 12 : 10, fontWeight: bold ? pw.FontWeight.bold : pw.FontWeight.normal,
+              color: muted ? PdfColors.grey600 : PdfColors.black)),
+        ]),
+      );
 
   Future<void> _export() async {
     final app = context.read<AppProvider>();
@@ -563,25 +628,38 @@ class _ReportsScreenState extends State<ReportsScreen>
               child: SizedBox(height: widget.desktop ? 260 : 200, child: _monthlyChart(monthly)),
             ),
           const SizedBox(height: 14),
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton.icon(
-              onPressed: _exporting || _report == null ? null : _export,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primary,
-                foregroundColor: Colors.white,
-                elevation: 0,
-                padding: const EdgeInsets.symmetric(vertical: 14),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          Row(children: [
+            Expanded(
+              child: ElevatedButton.icon(
+                onPressed: _exporting || _report == null ? null : _export,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primary,
+                  foregroundColor: Colors.white,
+                  elevation: 0,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                ),
+                icon: const Icon(Icons.table_view_rounded, size: 18),
+                label: const Text('Excel', style: TextStyle(fontWeight: FontWeight.w800)),
               ),
-              icon: const Icon(Icons.table_view_rounded),
-              label: const Text('Toa P&L kwenye Excel',
-                  style: TextStyle(fontWeight: FontWeight.w800)),
             ),
-          ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: _report == null ? null : _exportPnlPdf,
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: AppColors.primary,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                ),
+                icon: const Icon(Icons.picture_as_pdf_outlined, size: 18),
+                label: const Text('PDF', style: TextStyle(fontWeight: FontWeight.w800)),
+              ),
+            ),
+          ]),
           const SizedBox(height: 6),
           Text(
-            'Excel ina sheets 3: P&L, Mauzo (kwa siku, aina ya malipo, bidhaa) na Matumizi.',
+            'Excel ina sheets 3 (P&L, Mauzo, Matumizi) kwa kufanyia kazi; PDF ni hati rasmi ya kuchapisha/kutuma.',
             textAlign: TextAlign.center,
             style: TextStyle(color: AppColors.textMuted, fontSize: 11),
           ),
@@ -711,13 +789,47 @@ class _ReportsScreenState extends State<ReportsScreen>
               ]),
             ),
     ];
+    final topCategories = <String>{'Zote', ...top.map((p) => '${p['category'] ?? ''}').where((c) => c.isNotEmpty)}.toList();
+    final filteredTop = _topProductsCategory == 'Zote'
+        ? top
+        : top.where((p) => '${p['category']}' == _topProductsCategory).toList();
     final right = <Widget>[
           if (top.isNotEmpty)
             _card(
               title: 'Bidhaa zinazouzwa zaidi',
               subtitle: 'Idadi · mauzo · faida',
               child: Column(children: [
-                for (var i = 0; i < top.length && i < (widget.desktop ? 25 : 15); i++) _productRow(i + 1, top[i]),
+                if (topCategories.length > 2)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: SizedBox(
+                      height: 32,
+                      child: ListView(
+                        scrollDirection: Axis.horizontal,
+                        children: [
+                          for (final c in topCategories)
+                            Padding(
+                              padding: const EdgeInsets.only(right: 6),
+                              child: ChoiceChip(
+                                label: Text(c, style: const TextStyle(fontSize: 11)),
+                                selected: _topProductsCategory == c,
+                                onSelected: (_) => setState(() => _topProductsCategory = c),
+                                selectedColor: AppColors.primary.withAlpha(60),
+                                backgroundColor: AppColors.bg,
+                                labelStyle: TextStyle(color: _topProductsCategory == c ? AppColors.primaryLt : AppColors.textMuted),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
+                if (filteredTop.isEmpty)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    child: Text('Hakuna bidhaa kwenye kategoria hii', style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
+                  )
+                else
+                  for (var i = 0; i < filteredTop.length && i < (widget.desktop ? 25 : 15); i++) _productRow(i + 1, filteredTop[i]),
               ]),
             ),
     ];
