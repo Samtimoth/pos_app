@@ -1,3 +1,77 @@
+import 'dart:convert';
+
+/// Sehemu za risiti zinazoonekana/kuficha (Hatua 6: receipt template
+/// designer). Default zinalingana na tabia ya risiti KABLA ya feature hii
+/// kuwepo (logo/QR/cashier/customer = onyesha, kama zilivyokuwa siku zote),
+/// address/phone ni nyongeza mpya, hivyo zimezimwa kwa default ili risiti
+/// za wateja wa zamani zisibadilike bila wao kuomba.
+class ReceiptTemplate {
+  final bool showLogo;
+  final bool showQr;
+  final bool showCashier;
+  final bool showCustomer;
+  final bool showAddress;
+  final bool showPhone;
+
+  const ReceiptTemplate({
+    this.showLogo = true,
+    this.showQr = true,
+    this.showCashier = true,
+    this.showCustomer = true,
+    this.showAddress = false,
+    this.showPhone = false,
+  });
+
+  factory ReceiptTemplate.fromRaw(dynamic raw) {
+    if (raw == null) return const ReceiptTemplate();
+    Map<String, dynamic>? j;
+    if (raw is String && raw.isNotEmpty) {
+      try {
+        j = Map<String, dynamic>.from(jsonDecode(raw) as Map);
+      } catch (_) {
+        j = null;
+      }
+    } else if (raw is Map) {
+      j = Map<String, dynamic>.from(raw);
+    }
+    if (j == null) return const ReceiptTemplate();
+    return ReceiptTemplate(
+      showLogo: j['show_logo'] as bool? ?? true,
+      showQr: j['show_qr'] as bool? ?? true,
+      showCashier: j['show_cashier'] as bool? ?? true,
+      showCustomer: j['show_customer'] as bool? ?? true,
+      showAddress: j['show_address'] as bool? ?? false,
+      showPhone: j['show_phone'] as bool? ?? false,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        'show_logo': showLogo,
+        'show_qr': showQr,
+        'show_cashier': showCashier,
+        'show_customer': showCustomer,
+        'show_address': showAddress,
+        'show_phone': showPhone,
+      };
+
+  ReceiptTemplate copyWith({
+    bool? showLogo,
+    bool? showQr,
+    bool? showCashier,
+    bool? showCustomer,
+    bool? showAddress,
+    bool? showPhone,
+  }) =>
+      ReceiptTemplate(
+        showLogo: showLogo ?? this.showLogo,
+        showQr: showQr ?? this.showQr,
+        showCashier: showCashier ?? this.showCashier,
+        showCustomer: showCustomer ?? this.showCustomer,
+        showAddress: showAddress ?? this.showAddress,
+        showPhone: showPhone ?? this.showPhone,
+      );
+}
+
 class Branch {
   final int branchId;
   final String branchName;
@@ -31,6 +105,7 @@ class Business {
   final String tradeName;
   final String receiptHeader;
   final String receiptFooter;
+  final ReceiptTemplate receiptTemplate;
   final String role;
   final String country;
   final String currency;
@@ -55,6 +130,7 @@ class Business {
     required this.tradeName,
     this.receiptHeader = '',
     this.receiptFooter = '',
+    this.receiptTemplate = const ReceiptTemplate(),
     required this.role,
     required this.country,
     required this.currency,
@@ -80,6 +156,7 @@ class Business {
         tradeName:       j['trade_name'] as String? ?? '',
         receiptHeader:   j['receipt_header'] as String? ?? '',
         receiptFooter:   j['receipt_footer'] as String? ?? '',
+        receiptTemplate: ReceiptTemplate.fromRaw(j['receipt_template']),
         role:            j['role'] as String? ?? 'Viewer',
         country:         j['country'] as String? ?? 'TZ',
         currency:        j['currency'] as String? ?? 'TZS',

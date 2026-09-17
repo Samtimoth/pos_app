@@ -788,6 +788,7 @@ class ApiService {
     required String currency,
     String receiptHeader = '',
     String receiptFooter = '',
+    String? receiptTemplate,
   }) async {
     final res = await _client
         .post(
@@ -804,6 +805,7 @@ class ApiService {
             'currency':       currency,
             'receipt_header': receiptHeader,
             'receipt_footer': receiptFooter,
+            'receipt_template': ?receiptTemplate,
           }),
         )
         .timeout(const Duration(seconds: 20));

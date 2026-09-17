@@ -10,6 +10,7 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:barcode/barcode.dart' as bc;
 import 'package:http/http.dart' as http;
+import '../models/business.dart';
 import '../models/customer.dart';
 import '../models/product.dart';
 import '../models/sale.dart';
@@ -1921,6 +1922,9 @@ class _CartPanelState extends State<_CartPanel> {
           discount: (res['discount_amount'] as num?)?.toDouble() ?? _discount,
           cashierName: app.user?.fullname ?? '',
           logoUrl: app.selectedBusiness?.logoPath ?? '',
+          businessAddress: app.selectedBusiness?.address ?? '',
+          businessPhone: app.selectedBusiness?.phone ?? '',
+          template: app.selectedBusiness?.receiptTemplate ?? const ReceiptTemplate(),
           items: cart.items
               .map(
                 (i) => _PosReceiptItem(
@@ -2606,6 +2610,9 @@ class _CartSheetState extends State<_CartSheet> {
           discount: (res['discount_amount'] as num?)?.toDouble() ?? _discount,
           cashierName: app.user?.fullname ?? '',
           logoUrl: app.selectedBusiness?.logoPath ?? '',
+          businessAddress: app.selectedBusiness?.address ?? '',
+          businessPhone: app.selectedBusiness?.phone ?? '',
+          template: app.selectedBusiness?.receiptTemplate ?? const ReceiptTemplate(),
           items: cart.items
               .map(
                 (i) => _PosReceiptItem(
@@ -3313,6 +3320,9 @@ class _PosReceiptData {
   final double discount;
   final String cashierName;
   final String logoUrl;
+  final String businessAddress;
+  final String businessPhone;
+  final ReceiptTemplate template;
   final List<_PosReceiptItem> items;
 
   const _PosReceiptData({
@@ -3330,6 +3340,9 @@ class _PosReceiptData {
     this.discount = 0,
     this.cashierName = '',
     this.logoUrl = '',
+    this.businessAddress = '',
+    this.businessPhone = '',
+    this.template = const ReceiptTemplate(),
     required this.items,
   });
 
@@ -3351,6 +3364,9 @@ class _PosReceiptData {
     double discount = 0,
     String cashierName = '',
     String logoUrl = '',
+    String businessAddress = '',
+    String businessPhone = '',
+    ReceiptTemplate template = const ReceiptTemplate(),
     required List<_PosReceiptItem> items,
   }) {
     final data = response['data'];
@@ -3381,6 +3397,9 @@ class _PosReceiptData {
       discount: discount,
       cashierName: cashierName,
       logoUrl: logoUrl,
+      businessAddress: businessAddress,
+      businessPhone: businessPhone,
+      template: template,
       items: items,
     );
   }
@@ -3718,7 +3737,7 @@ class _PosReceiptSheetState extends State<_PosReceiptSheet> {
   Future<void> _printReceipt(NumberFormat fmt) async {
     setState(() => _printing = true);
     pw.MemoryImage? logo;
-    if (receipt.logoUrl.isNotEmpty) {
+    if (receipt.template.showLogo && receipt.logoUrl.isNotEmpty) {
       try {
         final res = await http
             .get(Uri.parse(receipt.logoUrl))
@@ -3766,14 +3785,21 @@ class _PosReceiptSheetState extends State<_PosReceiptSheet> {
               ),
             ),
             pw.SizedBox(height: 8),
+            if (receipt.template.showAddress && receipt.businessAddress.isNotEmpty)
+              pw.Center(child: pw.Text(receipt.businessAddress, style: const pw.TextStyle(fontSize: 8))),
+            if (receipt.template.showPhone && receipt.businessPhone.isNotEmpty)
+              pw.Center(child: pw.Text(receipt.businessPhone, style: const pw.TextStyle(fontSize: 8))),
+            pw.SizedBox(height: 4),
             _pdfRow('Receipt No', receipt.receiptNo),
             _pdfRow('Date', dateFmt.format(receipt.date)),
-            if (receipt.cashierName.isNotEmpty)
+            if (receipt.template.showCashier && receipt.cashierName.isNotEmpty)
               _pdfRow('Muuzaji', receipt.cashierName),
-            _pdfRow('Customer', receipt.customerName),
-            if (receipt.customerPhone.isNotEmpty)
-              _pdfRow('Phone', receipt.customerPhone),
-            _pdfRow('Customer Type', _label(receipt.customerType)),
+            if (receipt.template.showCustomer) ...[
+              _pdfRow('Customer', receipt.customerName),
+              if (receipt.customerPhone.isNotEmpty)
+                _pdfRow('Phone', receipt.customerPhone),
+              _pdfRow('Customer Type', _label(receipt.customerType)),
+            ],
             _pdfRow('Payment Type', _label(receipt.paymentType)),
             pw.Divider(),
             ...receipt.items.map(
@@ -3813,15 +3839,17 @@ class _PosReceiptSheetState extends State<_PosReceiptSheet> {
               ),
             if (receipt.change > 0)
               _pdfMoney('Change', receipt.change, fmt, bold: true),
-            pw.SizedBox(height: 12),
-            pw.Center(
-              child: pw.BarcodeWidget(
-                barcode: bc.Barcode.qrCode(),
-                data: qrData,
-                width: 70,
-                height: 70,
+            if (receipt.template.showQr) ...[
+              pw.SizedBox(height: 12),
+              pw.Center(
+                child: pw.BarcodeWidget(
+                  barcode: bc.Barcode.qrCode(),
+                  data: qrData,
+                  width: 70,
+                  height: 70,
+                ),
               ),
-            ),
+            ],
             pw.SizedBox(height: 8),
             pw.Center(
               child: pw.Text(

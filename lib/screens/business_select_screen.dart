@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/business.dart';
@@ -663,6 +665,7 @@ class _EditBusinessSheetState extends State<_EditBusinessSheet> {
   );
   late String _country = widget.business.country;
   late String _currency = widget.business.currency;
+  late ReceiptTemplate _template = widget.business.receiptTemplate;
   bool _saving = false;
 
   @override
@@ -721,6 +724,7 @@ class _EditBusinessSheetState extends State<_EditBusinessSheet> {
         currency: _currency,
         receiptHeader: _receiptHeaderCtrl.text.trim(),
         receiptFooter: _receiptFooterCtrl.text.trim(),
+        receiptTemplate: jsonEncode(_template.toJson()),
       );
       if (!mounted) return;
       if (res['success'] == true) {
@@ -731,6 +735,7 @@ class _EditBusinessSheetState extends State<_EditBusinessSheet> {
             tradeName: _tradeCtrl.text.trim(),
             receiptHeader: _receiptHeaderCtrl.text.trim(),
             receiptFooter: _receiptFooterCtrl.text.trim(),
+            receiptTemplate: _template,
             role: widget.business.role,
             country: _country,
             currency: _currency,
@@ -960,6 +965,28 @@ class _EditBusinessSheetState extends State<_EditBusinessSheet> {
                           ),
                         ),
                       ),
+                      const SizedBox(height: 18),
+                      Text(
+                        'Sehemu za Kuonyesha kwenye Risiti',
+                        style: TextStyle(
+                          color: AppColors.textMuted,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      _templateToggle('Logo ya biashara', _template.showLogo,
+                          (v) => setState(() => _template = _template.copyWith(showLogo: v))),
+                      _templateToggle('QR code (uthibitisho)', _template.showQr,
+                          (v) => setState(() => _template = _template.copyWith(showQr: v))),
+                      _templateToggle('Jina la muuzaji (cashier)', _template.showCashier,
+                          (v) => setState(() => _template = _template.copyWith(showCashier: v))),
+                      _templateToggle('Jina/namba ya mteja', _template.showCustomer,
+                          (v) => setState(() => _template = _template.copyWith(showCustomer: v))),
+                      _templateToggle('Anuani ya biashara', _template.showAddress,
+                          (v) => setState(() => _template = _template.copyWith(showAddress: v))),
+                      _templateToggle('Namba ya simu ya biashara', _template.showPhone,
+                          (v) => setState(() => _template = _template.copyWith(showPhone: v))),
                     ],
                   ),
                 ),
@@ -1055,6 +1082,18 @@ class _EditBusinessSheetState extends State<_EditBusinessSheet> {
       ),
     );
   }
+
+  Widget _templateToggle(String label, bool value, ValueChanged<bool> onChanged) => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 1),
+        child: SwitchListTile(
+          value: value,
+          onChanged: onChanged,
+          title: Text(label, style: TextStyle(color: AppColors.textWhite, fontSize: 13)),
+          activeThumbColor: AppColors.primaryLt,
+          dense: true,
+          contentPadding: EdgeInsets.zero,
+        ),
+      );
 
   Widget _labeledPicker(String label, Widget picker) => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
