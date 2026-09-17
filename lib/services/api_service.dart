@@ -754,6 +754,34 @@ class ApiService {
     return _decode(res) as Map<String, dynamic>;
   }
 
+  // ── Matangazo ya SuperAdmin (push notifications) ────────
+  Future<Map<String, dynamic>> listAnnouncements() async {
+    final res = await _client
+        .get(Uri.parse('$baseUrl/announcements.php?action=list'), headers: _headers)
+        .timeout(const Duration(seconds: 15));
+    return _decode(res) as Map<String, dynamic>;
+  }
+
+  Future<Map<String, dynamic>> sendAnnouncement({
+    required String title,
+    required String body,
+    int? businessId,
+  }) async {
+    final res = await _client
+        .post(
+          Uri.parse('$baseUrl/announcements.php'),
+          headers: _headers,
+          body: jsonEncode({
+            'action': 'send',
+            'title': title,
+            'body': body,
+            'business_id': ?businessId,
+          }),
+        )
+        .timeout(const Duration(seconds: 30));
+    return _decode(res) as Map<String, dynamic>;
+  }
+
   // ── Add Business ───────────────────────────────────────
   Future<Map<String, dynamic>> createBusiness({
     required int userId,
