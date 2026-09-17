@@ -382,7 +382,9 @@ void main() {
     await _settle(tester);
     await _snap(tester, key, 'p1_products');
 
-    await tester.tap(find.byIcon(Icons.tune_outlined).first);
+    await tester.tap(find.byIcon(Icons.grid_view_outlined).first);
+    await _settle(tester);
+    await tester.tap(find.text('Simamia').first);
     await _settle(tester);
     await _snap(tester, key, 'p2_manage');
 

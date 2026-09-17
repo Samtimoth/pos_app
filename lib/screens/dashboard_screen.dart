@@ -12,6 +12,9 @@ import '../services/sync_service.dart';
 import '../widgets/sync_status_bar.dart';
 import 'reports_screen.dart';
 import 'customers_screen.dart';
+import 'expense_form_sheet.dart';
+import 'more_screen.dart';
+import 'profile_screen.dart';
 import 'stock_ledger_screen.dart';
 import '../providers/theme_provider.dart';
 import '../theme/app_theme.dart';
@@ -37,7 +40,8 @@ class DashboardScreen extends StatefulWidget {
 class _DashboardScreenState extends State<DashboardScreen>
     with SingleTickerProviderStateMixin {
   int _nav = 0;
-  int _manageInitialTab = 0;
+  final int _manageInitialTab = 0;
+  String? _manageInitialTabKey;
   Map<String, dynamic> _stats = {};
   List<dynamic> _salesChart = [];
   List<Sale> _recentSales = [];
@@ -275,6 +279,8 @@ class _DashboardScreenState extends State<DashboardScreen>
             targetId: 'manage_tabs',
           ),
         ];
+      case 8:
+        return const []; // "Zaidi" (More) — orodha rahisi, hauitaji coach-mark yake
       default:
         return [
           const TutorialStep(
@@ -298,7 +304,7 @@ class _DashboardScreenState extends State<DashboardScreen>
           const TutorialStep(
             icon: Icons.add_shopping_cart_rounded,
             title: 'Menyu ya chini',
-            body: 'POS katikati; Dashibodi, Simamia, Mauzo na Bidhaa pembeni. Unaweza kubadili wakati wowote.',
+            body: 'POS katikati; Dashibodi, Bidhaa, Mauzo na Zaidi pembeni — "Zaidi" ina Simamia, Wateja, Ripoti na vitu vingine. Unaweza kubadili wakati wowote.',
             targetId: 'nav_pos',
           ),
         ];
@@ -711,7 +717,7 @@ class _DashboardScreenState extends State<DashboardScreen>
   // ── Desktop Top Bar ───────────────────────────────────────────────
   Widget _buildDesktopTopBar(User user, Business? biz, AppProvider app) {
     final l = L.of(context);
-    final titles = [l.dashboard, l.pos, l.sales, l.products, l.manage, 'Ripoti', 'Wateja', 'Historia ya Stock'];
+    final titles = [l.dashboard, l.pos, l.sales, l.products, l.manage, 'Ripoti', 'Wateja', 'Historia ya Stock', 'Zaidi'];
     return Container(
       height: 68,
       padding: const EdgeInsets.symmetric(horizontal: 28),
@@ -939,8 +945,13 @@ class _DashboardScreenState extends State<DashboardScreen>
                 Icons.dashboard_rounded,
                 l.dashboard,
               ),
-              // Manage (center button handles POS, so this slot shows Manage)
-              _navItem(4, Icons.tune_outlined, Icons.tune_rounded, l.manage),
+              // Bidhaa
+              _navItem(
+                3,
+                Icons.inventory_2_outlined,
+                Icons.inventory_2_rounded,
+                l.products,
+              ),
               // Center: POS shortcut (prominent)
               Expanded(
                 child: GestureDetector(
@@ -987,13 +998,9 @@ class _DashboardScreenState extends State<DashboardScreen>
                 Icons.receipt_long_rounded,
                 l.sales,
               ),
-              // Bidhaa
-              _navItem(
-                3,
-                Icons.inventory_2_outlined,
-                Icons.inventory_2_rounded,
-                l.products,
-              ),
+              // Zaidi (More) — kila kitu kingine (Simamia, Manunuzi,
+              // Wafanyikazi, Wateja, Matumizi, Ripoti, Historia ya Stock...)
+              _navItem(8, Icons.grid_view_outlined, Icons.grid_view_rounded, 'Zaidi'),
             ],
           ),
         ),
@@ -1046,6 +1053,9 @@ class _DashboardScreenState extends State<DashboardScreen>
 
         // ── Subscription banner ─────────────────────────────────────
         SliverToBoxAdapter(child: _buildSubscriptionBanner(biz)),
+
+        // ── Quick Access grid ────────────────────────────────────────
+        SliverToBoxAdapter(child: _buildQuickAccessGrid(l)),
 
         // ── KPI Cards ─────────────────────────────────────────────
         SliverToBoxAdapter(child: _buildMobileKpiRow(l)),
@@ -1746,7 +1756,7 @@ class _DashboardScreenState extends State<DashboardScreen>
       Icons.people_rounded,
       AppColors.chartPurple,
       onTap: () => setState(() {
-        _manageInitialTab = 2;
+        _manageInitialTabKey = 'staff';
         _nav = 4;
       }),
     ),
@@ -1763,6 +1773,134 @@ class _DashboardScreenState extends State<DashboardScreen>
       ),
     ),
   ];
+
+  // "Zaidi" (More) page contents — kila kitu kisichokaa moja kwa moja
+  // kwenye bottom nav ya simu (nafasi ni ya Dashibodi/Bidhaa/POS/Mauzo tu).
+  List<MoreListItem> _moreItems(L l) => [
+    MoreListItem(
+      icon: Icons.tune_rounded,
+      color: AppColors.primaryLt,
+      label: 'Simamia',
+      subtitle: 'Kategoria, vipimo, wasambazaji, maagizo, nukuu',
+      onTap: () => setState(() { _manageInitialTabKey = null; _nav = 4; }),
+    ),
+    MoreListItem(
+      icon: Icons.move_to_inbox_rounded,
+      color: AppColors.chartOrange,
+      label: 'Manunuzi',
+      subtitle: 'Ununuzi wa stock kutoka kwa wasambazaji',
+      onTap: () => setState(() { _manageInitialTabKey = 'purchases'; _nav = 4; }),
+    ),
+    MoreListItem(
+      icon: Icons.badge_rounded,
+      color: AppColors.chartPurple,
+      label: 'Wafanyikazi',
+      subtitle: 'Watumiaji na ruhusa zao',
+      onTap: () => setState(() { _manageInitialTabKey = 'staff'; _nav = 4; }),
+    ),
+    MoreListItem(
+      icon: Icons.people_alt_rounded,
+      color: AppColors.chartBlue,
+      label: 'Wateja',
+      onTap: () => setState(() => _nav = 6),
+    ),
+    MoreListItem(
+      icon: Icons.payments_rounded,
+      color: AppColors.chartRed,
+      label: 'Ongeza Matumizi',
+      subtitle: 'Kodi, umeme, usafiri...',
+      onTap: () => ExpenseFormSheet.show(context),
+    ),
+    MoreListItem(
+      icon: Icons.analytics_rounded,
+      color: AppColors.accent,
+      label: 'Ripoti',
+      subtitle: 'P&L, mauzo, mtiririko wa pesa',
+      onTap: () => setState(() => _nav = 5),
+    ),
+    MoreListItem(
+      icon: Icons.history_rounded,
+      color: AppColors.chartGray,
+      label: 'Historia ya Stock',
+      onTap: () => setState(() => _nav = 7),
+    ),
+    MoreListItem(
+      icon: Icons.person_outline_rounded,
+      color: AppColors.textMuted,
+      label: 'Wasifu Wangu',
+      onTap: () => Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => const ProfileScreen()),
+      ),
+    ),
+  ];
+
+  // ── Quick Access grid (mobile dashboard) — vitufe vya action, si
+  // takwimu (tofauti na _kpiItems, ambayo ni stat cards zenye thamani) ──
+  List<_KpiItem> _quickAccessItems(L l) => [
+    _KpiItem('POS', '', Icons.point_of_sale_rounded, AppColors.accent,
+        onTap: () => setState(() => _nav = 1)),
+    _KpiItem('Bidhaa', '', Icons.inventory_2_rounded, AppColors.primaryLt,
+        onTap: () => setState(() => _nav = 3)),
+    _KpiItem('Manunuzi', '', Icons.move_to_inbox_rounded, AppColors.chartOrange,
+        onTap: () => setState(() { _manageInitialTabKey = 'purchases'; _nav = 4; })),
+    _KpiItem('Wateja', '', Icons.people_alt_rounded, AppColors.chartBlue,
+        onTap: () => setState(() => _nav = 6)),
+    _KpiItem('Wafanyikazi', '', Icons.badge_rounded, AppColors.chartPurple,
+        onTap: () => setState(() { _manageInitialTabKey = 'staff'; _nav = 4; })),
+    _KpiItem('Matumizi', '', Icons.payments_rounded, AppColors.chartRed,
+        onTap: () => ExpenseFormSheet.show(context)),
+    _KpiItem('Ripoti', '', Icons.analytics_rounded, AppColors.accentBright,
+        onTap: () => setState(() => _nav = 5)),
+    _KpiItem('Simamia', '', Icons.tune_rounded, AppColors.chartGray,
+        onTap: () => setState(() { _manageInitialTabKey = null; _nav = 4; })),
+  ];
+
+  Widget _buildQuickAccessGrid(L l) {
+    final items = _quickAccessItems(l);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: AppColors.bgCard,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: AppColors.border, width: 0.5),
+        ),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('Ufikiaji wa Haraka', style: TextStyle(color: AppColors.textMuted, fontSize: 12, fontWeight: FontWeight.w700)),
+          const SizedBox(height: 12),
+          GridView.count(
+            crossAxisCount: 4,
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            mainAxisSpacing: 14,
+            crossAxisSpacing: 8,
+            childAspectRatio: 0.78,
+            children: items.asMap().entries.map((e) => StaggeredItem(
+              index: e.key,
+              delay: const Duration(milliseconds: 50),
+              child: _quickAccessTile(e.value),
+            )).toList(),
+          ),
+        ]),
+      ),
+    );
+  }
+
+  Widget _quickAccessTile(_KpiItem item) => InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: item.onTap,
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Container(
+            width: 48, height: 48,
+            decoration: BoxDecoration(color: item.color.withAlpha(24), borderRadius: BorderRadius.circular(14)),
+            child: Icon(item.icon, color: item.color, size: 22),
+          ),
+          const SizedBox(height: 6),
+          Text(item.label, textAlign: TextAlign.center, maxLines: 1, overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: AppColors.textLight, fontSize: 10.5, fontWeight: FontWeight.w600)),
+        ]),
+      );
 
   Widget _kpiCard(_KpiItem item, {bool compact = false}) {
     final card = Container(
@@ -2717,13 +2855,15 @@ class _DashboardScreenState extends State<DashboardScreen>
           onBack: () => setState(() => _nav = 0),
         );
       case 4:
-        return ManageScreen(desktop: desktop, initialTab: _manageInitialTab);
+        return ManageScreen(desktop: desktop, initialTab: _manageInitialTab, initialTabKey: _manageInitialTabKey);
       case 5:
         return ReportsScreen(desktop: desktop);
       case 6:
         return CustomersScreen(desktop: desktop);
       case 7:
         return StockLedgerScreen(desktop: desktop);
+      case 8:
+        return MoreScreen(desktop: desktop, items: _moreItems(l));
       default:
         return desktop ? _buildDesktopDash(l) : _buildDashContent(l);
     }

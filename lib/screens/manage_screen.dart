@@ -18,7 +18,12 @@ import 'suppliers_screen.dart';
 class ManageScreen extends StatefulWidget {
   final bool desktop;
   final int initialTab;
-  const ManageScreen({super.key, this.desktop = false, this.initialTab = 0});
+  /// Tab key (matches `_visible`'s string keys, e.g. 'staff', 'purchases')
+  /// to jump to directly — more reliable than [initialTab]'s raw index,
+  /// since tab positions shift depending on which tabs a role/business can
+  /// see. Takes precedence over [initialTab] when the key is found.
+  final String? initialTabKey;
+  const ManageScreen({super.key, this.desktop = false, this.initialTab = 0, this.initialTabKey});
   @override
   State<ManageScreen> createState() => _ManageScreenState();
 }
@@ -45,6 +50,10 @@ class _ManageScreenState extends State<ManageScreen>
       if (user == null || user.canManageStaff) 'staff',
     ];
     var initIdx = widget.initialTab;
+    if (widget.initialTabKey != null) {
+      final keyed = _visible.indexOf(widget.initialTabKey!);
+      if (keyed >= 0) initIdx = keyed;
+    }
     if (_visible.isEmpty) {
       initIdx = 0;
     } else if (initIdx >= _visible.length) {
