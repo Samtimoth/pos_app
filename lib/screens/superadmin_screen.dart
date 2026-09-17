@@ -1,3 +1,4 @@
+import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
@@ -261,17 +262,22 @@ class _SuperAdminDashboardTabState extends State<_SuperAdminDashboardTab> {
     final s = _stats ?? {};
     final revenue = ((s['total_revenue_cents'] ?? 0) as int) / 100;
     final pendingAmt = ((s['pending_amount_cents'] ?? 0) as int) / 100;
+    final monthly = ((s['monthly'] as List?) ?? [])
+        .map((e) => Map<String, dynamic>.from(e as Map))
+        .toList();
 
     return RefreshIndicator(
       onRefresh: _load,
-      color: AppColors.primary,
+      color: AppColors.chartPurple,
       child: CustomScrollView(
         physics: const AlwaysScrollableScrollPhysics(),
         slivers: [
           SliverToBoxAdapter(
             child: _buildHeader(revenue, app.user?.fullname ?? 'SuperAdmin'),
           ),
-          SliverToBoxAdapter(child: _buildKpiRow(s, pendingAmt)),
+          SliverToBoxAdapter(child: _buildKpiGrid(s, pendingAmt)),
+          if (monthly.isNotEmpty) SliverToBoxAdapter(child: _buildTrendChart(monthly)),
+          SliverToBoxAdapter(child: _buildQuickActions()),
           const SliverToBoxAdapter(child: SizedBox(height: 24)),
         ],
       ),
@@ -282,8 +288,11 @@ class _SuperAdminDashboardTabState extends State<_SuperAdminDashboardTab> {
     width: double.infinity,
     padding: const EdgeInsets.fromLTRB(20, 20, 20, 28),
     decoration: const BoxDecoration(
+      // Kimakusudi ni tofauti (indigo/purple) na kijani cha "mmiliki wa duka"
+      // — dashibodi hii ni ulimwengu wake wa SuperAdmin, si toleo la
+      // kuazima la app ya biashara.
       gradient: LinearGradient(
-        colors: AppColors.gradHeader,
+        colors: AppColors.gradPurple,
         begin: Alignment.topLeft,
         end: Alignment.bottomRight,
       ),
@@ -419,7 +428,7 @@ class _SuperAdminDashboardTabState extends State<_SuperAdminDashboardTab> {
     );
   }
 
-  Widget _buildKpiRow(Map<String, dynamic> s, double pendingAmt) {
+  Widget _buildKpiGrid(Map<String, dynamic> s, double pendingAmt) {
     final items = [
       _KpiItem(
         'Biashara Zote',
@@ -458,27 +467,218 @@ class _SuperAdminDashboardTabState extends State<_SuperAdminDashboardTab> {
         AppColors.chartPurple,
       ),
     ];
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-      child: Row(
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+      child: GridView.count(
+        crossAxisCount: 2,
+        shrinkWrap: true,
+        physics: const NeverScrollableScrollPhysics(),
+        mainAxisSpacing: 10,
+        crossAxisSpacing: 10,
+        childAspectRatio: 1.55,
         children: items
             .asMap()
             .entries
             .map(
-              (e) => Padding(
-                padding: EdgeInsets.only(left: e.key == 0 ? 0 : 10),
-                child: SizedBox(
-                  width: 130,
-                  child: StaggeredItem(
-                    index: e.key,
-                    delay: const Duration(milliseconds: 70),
-                    child: _kpiCard(e.value),
-                  ),
-                ),
+              (e) => StaggeredItem(
+                index: e.key,
+                delay: const Duration(milliseconds: 70),
+                child: _kpiCard(e.value),
               ),
             )
             .toList(),
+      ),
+    );
+  }
+
+  String _short(double v) {
+    if (v >= 1000000) return '${(v / 1000000).toStringAsFixed(1)}M';
+    if (v >= 1000) return '${(v / 1000).toStringAsFixed(0)}K';
+    return v.toStringAsFixed(0);
+  }
+
+  Widget _buildTrendChart(List<Map<String, dynamic>> monthly) {
+    double maxY = 0;
+    final groups = <BarChartGroupData>[];
+    for (var i = 0; i < monthly.length; i++) {
+      final rv = ((monthly[i]['revenue_cents'] ?? 0) as int) / 100;
+      if (rv > maxY) maxY = rv;
+      groups.add(
+        BarChartGroupData(
+          x: i,
+          barRods: [
+            BarChartRodData(
+              toY: rv,
+              width: 18,
+              color: AppColors.chartPurple,
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(5)),
+            ),
+          ],
+        ),
+      );
+    }
+    const monthNames = ['', 'Jan', 'Feb', 'Mac', 'Apr', 'Mei', 'Jun', 'Jul', 'Ago', 'Sep', 'Okt', 'Nov', 'Des'];
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+      padding: const EdgeInsets.fromLTRB(16, 16, 12, 10),
+      decoration: BoxDecoration(
+        color: AppColors.bgCard,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: AppColors.border, width: 0.5),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.trending_up_rounded, color: AppColors.chartPurple, size: 18),
+              const SizedBox(width: 8),
+              Text(
+                'Mwenendo — Miezi 6 Iliyopita',
+                style: TextStyle(color: AppColors.textWhite, fontWeight: FontWeight.bold, fontSize: 14),
+              ),
+            ],
+          ),
+          const SizedBox(height: 2),
+          Text(
+            'Mapato kwa mwezi; namba chini ya mwezi ni biashara mpya',
+            style: TextStyle(color: AppColors.textMuted, fontSize: 11),
+          ),
+          const SizedBox(height: 14),
+          SizedBox(
+            height: 200,
+            child: BarChart(
+              BarChartData(
+                barGroups: groups,
+                maxY: maxY > 0 ? maxY * 1.25 : 100,
+                gridData: FlGridData(
+                  show: true,
+                  drawVerticalLine: false,
+                  horizontalInterval: maxY > 0 ? maxY / 4 : 25,
+                  getDrawingHorizontalLine: (_) => FlLine(color: AppColors.border, strokeWidth: 0.5),
+                ),
+                borderData: FlBorderData(show: false),
+                titlesData: FlTitlesData(
+                  leftTitles: AxisTitles(
+                    sideTitles: SideTitles(
+                      showTitles: true,
+                      reservedSize: 38,
+                      interval: maxY > 0 ? maxY / 4 : 25,
+                      getTitlesWidget: (v, _) =>
+                          Text(_short(v), style: TextStyle(color: AppColors.textMuted, fontSize: 9)),
+                    ),
+                  ),
+                  rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                  topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                  bottomTitles: AxisTitles(
+                    sideTitles: SideTitles(
+                      showTitles: true,
+                      reservedSize: 34,
+                      getTitlesWidget: (v, _) {
+                        final i = v.toInt();
+                        if (i < 0 || i >= monthly.length) return const SizedBox.shrink();
+                        final m = '${monthly[i]['month']}';
+                        final mon = int.tryParse(m.split('-').last) ?? 0;
+                        final nb = monthly[i]['new_businesses'] ?? 0;
+                        return Padding(
+                          padding: const EdgeInsets.only(top: 4),
+                          child: Column(
+                            children: [
+                              Text(
+                                mon >= 1 && mon <= 12 ? monthNames[mon] : m,
+                                style: TextStyle(color: AppColors.textMuted, fontSize: 9),
+                              ),
+                              Text(
+                                '+$nb',
+                                style: TextStyle(
+                                  color: AppColors.chartPurple,
+                                  fontSize: 9,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ),
+                barTouchData: BarTouchData(
+                  touchTooltipData: BarTouchTooltipData(
+                    getTooltipItem: (g, gi, rod, ri) => BarTooltipItem(
+                      'TZS ${_numFmt.format(rod.toY)}\n+${monthly[g.x.toInt()]['new_businesses'] ?? 0} biashara mpya',
+                      const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildQuickActions() {
+    final actions = [
+      _QuickAction('Biashara', Icons.storefront_rounded, AppColors.chartBlue, () => widget.onNavigateTab(1)),
+      _QuickAction('Malipo Yanayosubiri', Icons.hourglass_top_rounded, AppColors.chartOrange, () => widget.onNavigateTab(2)),
+      _QuickAction('Tuma Tangazo', Icons.campaign_rounded, AppColors.chartPurple, () => widget.onNavigateTab(3)),
+    ];
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 18, 16, 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Vitendo vya Haraka',
+            style: TextStyle(color: AppColors.textWhite, fontWeight: FontWeight.bold, fontSize: 14),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: actions
+                .asMap()
+                .entries
+                .map(
+                  (e) => Expanded(
+                    child: Padding(
+                      padding: EdgeInsets.only(right: e.key == actions.length - 1 ? 0 : 10),
+                      child: GestureDetector(
+                        onTap: e.value.onTap,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 6),
+                          decoration: BoxDecoration(
+                            color: AppColors.bgCard,
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(color: AppColors.border, width: 0.5),
+                          ),
+                          child: Column(
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.all(10),
+                                decoration: BoxDecoration(
+                                  color: e.value.color.withAlpha(30),
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: Icon(e.value.icon, color: e.value.color, size: 20),
+                              ),
+                              const SizedBox(height: 8),
+                              Text(
+                                e.value.label,
+                                textAlign: TextAlign.center,
+                                maxLines: 2,
+                                style: TextStyle(color: AppColors.textWhite, fontSize: 11, fontWeight: FontWeight.w600),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                )
+                .toList(),
+          ),
+        ],
       ),
     );
   }
@@ -527,6 +727,14 @@ class _KpiItem {
   final IconData icon;
   final Color color;
   _KpiItem(this.label, this.value, this.icon, this.color);
+}
+
+class _QuickAction {
+  final String label;
+  final IconData icon;
+  final Color color;
+  final VoidCallback onTap;
+  _QuickAction(this.label, this.icon, this.color, this.onTap);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
