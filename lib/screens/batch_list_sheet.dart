@@ -318,7 +318,8 @@ class _SummaryCard extends StatelessWidget {
           ]),
         ),
         Container(height: 1, color: AppColors.border),
-        // Financials
+        // Financials (wanao ruhusa pekee — Hatua 1)
+        if (context.read<AppProvider>().user?.canSeeCosts ?? false)
         Padding(
           padding: const EdgeInsets.fromLTRB(14, 10, 14, 14),
           child: Row(children: [
@@ -582,7 +583,8 @@ class _BatchCard extends StatelessWidget {
             ]),
             const SizedBox(height: 12),
 
-            // ── Price / profit ─────────────────────────────────────────────
+            // ── Price / profit (wanao ruhusa pekee — Hatua 1) ────────────
+            if (context.read<AppProvider>().user?.canSeeCosts ?? false)
             Container(
               padding: const EdgeInsets.all(11),
               decoration: BoxDecoration(

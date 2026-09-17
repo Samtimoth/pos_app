@@ -1,3 +1,4 @@
+import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
@@ -19,7 +20,7 @@ class _SuperAdminScreenState extends State<SuperAdminScreen>
   bool _loading = true;
   String _search = '';
   final _searchCtrl = TextEditingController();
-  late final _tab = TabController(length: 3, vsync: this);
+  late final _tab = TabController(length: 4, vsync: this);
 
   @override
   void initState() {
@@ -112,6 +113,8 @@ class _SuperAdminScreenState extends State<SuperAdminScreen>
         ],
         bottom: TabBar(
           controller: _tab,
+          isScrollable: true,
+          tabAlignment: TabAlignment.start,
           labelColor: AppColors.primary,
           unselectedLabelColor: AppColors.textMuted,
           indicatorColor: AppColors.primary,
@@ -119,6 +122,7 @@ class _SuperAdminScreenState extends State<SuperAdminScreen>
             Tab(text: 'Dashibodi'),
             Tab(text: 'Biashara'),
             Tab(text: 'Malipo'),
+            Tab(text: 'Matangazo'),
           ],
         ),
       ),
@@ -128,6 +132,7 @@ class _SuperAdminScreenState extends State<SuperAdminScreen>
           _SuperAdminDashboardTab(onNavigateTab: (i) => _tab.animateTo(i)),
           _buildBusinessesTab(),
           const _PaymentsTab(),
+          _AnnouncementsTab(businesses: _businesses),
         ],
       ),
     );
@@ -257,17 +262,22 @@ class _SuperAdminDashboardTabState extends State<_SuperAdminDashboardTab> {
     final s = _stats ?? {};
     final revenue = ((s['total_revenue_cents'] ?? 0) as int) / 100;
     final pendingAmt = ((s['pending_amount_cents'] ?? 0) as int) / 100;
+    final monthly = ((s['monthly'] as List?) ?? [])
+        .map((e) => Map<String, dynamic>.from(e as Map))
+        .toList();
 
     return RefreshIndicator(
       onRefresh: _load,
-      color: AppColors.primary,
+      color: AppColors.chartPurple,
       child: CustomScrollView(
         physics: const AlwaysScrollableScrollPhysics(),
         slivers: [
           SliverToBoxAdapter(
             child: _buildHeader(revenue, app.user?.fullname ?? 'SuperAdmin'),
           ),
-          SliverToBoxAdapter(child: _buildKpiRow(s, pendingAmt)),
+          SliverToBoxAdapter(child: _buildKpiGrid(s, pendingAmt)),
+          if (monthly.isNotEmpty) SliverToBoxAdapter(child: _buildTrendChart(monthly)),
+          SliverToBoxAdapter(child: _buildQuickActions()),
           const SliverToBoxAdapter(child: SizedBox(height: 24)),
         ],
       ),
@@ -278,8 +288,11 @@ class _SuperAdminDashboardTabState extends State<_SuperAdminDashboardTab> {
     width: double.infinity,
     padding: const EdgeInsets.fromLTRB(20, 20, 20, 28),
     decoration: const BoxDecoration(
+      // Kimakusudi ni tofauti (indigo/purple) na kijani cha "mmiliki wa duka"
+      // — dashibodi hii ni ulimwengu wake wa SuperAdmin, si toleo la
+      // kuazima la app ya biashara.
       gradient: LinearGradient(
-        colors: AppColors.gradHeader,
+        colors: AppColors.gradPurple,
         begin: Alignment.topLeft,
         end: Alignment.bottomRight,
       ),
@@ -415,7 +428,7 @@ class _SuperAdminDashboardTabState extends State<_SuperAdminDashboardTab> {
     );
   }
 
-  Widget _buildKpiRow(Map<String, dynamic> s, double pendingAmt) {
+  Widget _buildKpiGrid(Map<String, dynamic> s, double pendingAmt) {
     final items = [
       _KpiItem(
         'Biashara Zote',
@@ -454,27 +467,218 @@ class _SuperAdminDashboardTabState extends State<_SuperAdminDashboardTab> {
         AppColors.chartPurple,
       ),
     ];
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-      child: Row(
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+      child: GridView.count(
+        crossAxisCount: 2,
+        shrinkWrap: true,
+        physics: const NeverScrollableScrollPhysics(),
+        mainAxisSpacing: 10,
+        crossAxisSpacing: 10,
+        childAspectRatio: 1.55,
         children: items
             .asMap()
             .entries
             .map(
-              (e) => Padding(
-                padding: EdgeInsets.only(left: e.key == 0 ? 0 : 10),
-                child: SizedBox(
-                  width: 130,
-                  child: StaggeredItem(
-                    index: e.key,
-                    delay: const Duration(milliseconds: 70),
-                    child: _kpiCard(e.value),
-                  ),
-                ),
+              (e) => StaggeredItem(
+                index: e.key,
+                delay: const Duration(milliseconds: 70),
+                child: _kpiCard(e.value),
               ),
             )
             .toList(),
+      ),
+    );
+  }
+
+  String _short(double v) {
+    if (v >= 1000000) return '${(v / 1000000).toStringAsFixed(1)}M';
+    if (v >= 1000) return '${(v / 1000).toStringAsFixed(0)}K';
+    return v.toStringAsFixed(0);
+  }
+
+  Widget _buildTrendChart(List<Map<String, dynamic>> monthly) {
+    double maxY = 0;
+    final groups = <BarChartGroupData>[];
+    for (var i = 0; i < monthly.length; i++) {
+      final rv = ((monthly[i]['revenue_cents'] ?? 0) as int) / 100;
+      if (rv > maxY) maxY = rv;
+      groups.add(
+        BarChartGroupData(
+          x: i,
+          barRods: [
+            BarChartRodData(
+              toY: rv,
+              width: 18,
+              color: AppColors.chartPurple,
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(5)),
+            ),
+          ],
+        ),
+      );
+    }
+    const monthNames = ['', 'Jan', 'Feb', 'Mac', 'Apr', 'Mei', 'Jun', 'Jul', 'Ago', 'Sep', 'Okt', 'Nov', 'Des'];
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+      padding: const EdgeInsets.fromLTRB(16, 16, 12, 10),
+      decoration: BoxDecoration(
+        color: AppColors.bgCard,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: AppColors.border, width: 0.5),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.trending_up_rounded, color: AppColors.chartPurple, size: 18),
+              const SizedBox(width: 8),
+              Text(
+                'Mwenendo — Miezi 6 Iliyopita',
+                style: TextStyle(color: AppColors.textWhite, fontWeight: FontWeight.bold, fontSize: 14),
+              ),
+            ],
+          ),
+          const SizedBox(height: 2),
+          Text(
+            'Mapato kwa mwezi; namba chini ya mwezi ni biashara mpya',
+            style: TextStyle(color: AppColors.textMuted, fontSize: 11),
+          ),
+          const SizedBox(height: 14),
+          SizedBox(
+            height: 200,
+            child: BarChart(
+              BarChartData(
+                barGroups: groups,
+                maxY: maxY > 0 ? maxY * 1.25 : 100,
+                gridData: FlGridData(
+                  show: true,
+                  drawVerticalLine: false,
+                  horizontalInterval: maxY > 0 ? maxY / 4 : 25,
+                  getDrawingHorizontalLine: (_) => FlLine(color: AppColors.border, strokeWidth: 0.5),
+                ),
+                borderData: FlBorderData(show: false),
+                titlesData: FlTitlesData(
+                  leftTitles: AxisTitles(
+                    sideTitles: SideTitles(
+                      showTitles: true,
+                      reservedSize: 38,
+                      interval: maxY > 0 ? maxY / 4 : 25,
+                      getTitlesWidget: (v, _) =>
+                          Text(_short(v), style: TextStyle(color: AppColors.textMuted, fontSize: 9)),
+                    ),
+                  ),
+                  rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                  topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                  bottomTitles: AxisTitles(
+                    sideTitles: SideTitles(
+                      showTitles: true,
+                      reservedSize: 34,
+                      getTitlesWidget: (v, _) {
+                        final i = v.toInt();
+                        if (i < 0 || i >= monthly.length) return const SizedBox.shrink();
+                        final m = '${monthly[i]['month']}';
+                        final mon = int.tryParse(m.split('-').last) ?? 0;
+                        final nb = monthly[i]['new_businesses'] ?? 0;
+                        return Padding(
+                          padding: const EdgeInsets.only(top: 4),
+                          child: Column(
+                            children: [
+                              Text(
+                                mon >= 1 && mon <= 12 ? monthNames[mon] : m,
+                                style: TextStyle(color: AppColors.textMuted, fontSize: 9),
+                              ),
+                              Text(
+                                '+$nb',
+                                style: TextStyle(
+                                  color: AppColors.chartPurple,
+                                  fontSize: 9,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ),
+                barTouchData: BarTouchData(
+                  touchTooltipData: BarTouchTooltipData(
+                    getTooltipItem: (g, gi, rod, ri) => BarTooltipItem(
+                      'TZS ${_numFmt.format(rod.toY)}\n+${monthly[g.x.toInt()]['new_businesses'] ?? 0} biashara mpya',
+                      const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildQuickActions() {
+    final actions = [
+      _QuickAction('Biashara', Icons.storefront_rounded, AppColors.chartBlue, () => widget.onNavigateTab(1)),
+      _QuickAction('Malipo Yanayosubiri', Icons.hourglass_top_rounded, AppColors.chartOrange, () => widget.onNavigateTab(2)),
+      _QuickAction('Tuma Tangazo', Icons.campaign_rounded, AppColors.chartPurple, () => widget.onNavigateTab(3)),
+    ];
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 18, 16, 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Vitendo vya Haraka',
+            style: TextStyle(color: AppColors.textWhite, fontWeight: FontWeight.bold, fontSize: 14),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: actions
+                .asMap()
+                .entries
+                .map(
+                  (e) => Expanded(
+                    child: Padding(
+                      padding: EdgeInsets.only(right: e.key == actions.length - 1 ? 0 : 10),
+                      child: GestureDetector(
+                        onTap: e.value.onTap,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 6),
+                          decoration: BoxDecoration(
+                            color: AppColors.bgCard,
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(color: AppColors.border, width: 0.5),
+                          ),
+                          child: Column(
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.all(10),
+                                decoration: BoxDecoration(
+                                  color: e.value.color.withAlpha(30),
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: Icon(e.value.icon, color: e.value.color, size: 20),
+                              ),
+                              const SizedBox(height: 8),
+                              Text(
+                                e.value.label,
+                                textAlign: TextAlign.center,
+                                maxLines: 2,
+                                style: TextStyle(color: AppColors.textWhite, fontSize: 11, fontWeight: FontWeight.w600),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                )
+                .toList(),
+          ),
+        ],
       ),
     );
   }
@@ -523,6 +727,14 @@ class _KpiItem {
   final IconData icon;
   final Color color;
   _KpiItem(this.label, this.value, this.icon, this.color);
+}
+
+class _QuickAction {
+  final String label;
+  final IconData icon;
+  final Color color;
+  final VoidCallback onTap;
+  _QuickAction(this.label, this.icon, this.color, this.onTap);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -672,6 +884,265 @@ class _PaymentsTabState extends State<_PaymentsTab> {
       ),
       backgroundColor: AppColors.bgCard,
       side: BorderSide(color: selected ? color : AppColors.border),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Announcements Tab — SuperAdmin push notification broadcasts
+// ─────────────────────────────────────────────────────────────────────────────
+class _AnnouncementsTab extends StatefulWidget {
+  final List<Map<String, dynamic>> businesses;
+  const _AnnouncementsTab({required this.businesses});
+  @override
+  State<_AnnouncementsTab> createState() => _AnnouncementsTabState();
+}
+
+class _AnnouncementsTabState extends State<_AnnouncementsTab> {
+  final _titleCtrl = TextEditingController();
+  final _bodyCtrl = TextEditingController();
+  List<Map<String, dynamic>> _history = [];
+  bool _loadingHistory = true;
+  bool _sending = false;
+  bool _fcmConfigured = true;
+  Map<String, dynamic>? _target; // null = Zote (biashara zote)
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void dispose() {
+    _titleCtrl.dispose();
+    _bodyCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    final app = context.read<AppProvider>();
+    if (app.api == null) return;
+    setState(() => _loadingHistory = true);
+    try {
+      final res = await app.api!.listAnnouncements();
+      if (mounted && res['success'] == true) {
+        setState(() {
+          _history = (res['announcements'] as List).map((e) => Map<String, dynamic>.from(e as Map)).toList();
+          _fcmConfigured = res['fcm_configured'] == true;
+        });
+      }
+    } catch (_) {}
+    if (mounted) setState(() => _loadingHistory = false);
+  }
+
+  void _snack(String msg, Color color) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(msg), backgroundColor: color, behavior: SnackBarBehavior.floating),
+    );
+  }
+
+  Future<void> _send() async {
+    final title = _titleCtrl.text.trim();
+    final body = _bodyCtrl.text.trim();
+    if (title.isEmpty || body.isEmpty) {
+      _snack('Andika kichwa na ujumbe', AppColors.chartOrange);
+      return;
+    }
+    final app = context.read<AppProvider>();
+    if (app.api == null) return;
+    setState(() => _sending = true);
+    try {
+      final res = await app.api!.sendAnnouncement(
+        title: title,
+        body: body,
+        businessId: _target?['business_id'] as int?,
+      );
+      if (!mounted) return;
+      if (res['success'] == true) {
+        _titleCtrl.clear();
+        _bodyCtrl.clear();
+        setState(() => _target = null);
+        _snack('${res['message'] ?? '✅'}', AppColors.accent);
+        _load();
+      } else {
+        _snack('${res['message'] ?? 'Hitilafu'}', AppColors.chartRed);
+      }
+    } catch (e) {
+      if (mounted) _snack('$e', AppColors.chartRed);
+    } finally {
+      if (mounted) setState(() => _sending = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return RefreshIndicator(
+      onRefresh: _load,
+      color: AppColors.primary,
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(16, 14, 16, 90),
+        children: [
+          if (!_fcmConfigured)
+            Container(
+              margin: const EdgeInsets.only(bottom: 14),
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(color: AppColors.chartOrange.withAlpha(24), borderRadius: BorderRadius.circular(12)),
+              child: Row(children: [
+                Icon(Icons.warning_amber_rounded, color: AppColors.chartOrange, size: 18),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Firebase bado haijawekwa kikamilifu server-side — matangazo yanahifadhiwa lakini hayafiki kwenye vifaa bado.',
+                    style: TextStyle(color: AppColors.chartOrange, fontSize: 12),
+                  ),
+                ),
+              ]),
+            ),
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(color: AppColors.bgCard, borderRadius: BorderRadius.circular(16), border: Border.all(color: AppColors.border)),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('Tuma Tangazo Jipya', style: TextStyle(color: AppColors.textWhite, fontWeight: FontWeight.w800, fontSize: 15)),
+              const SizedBox(height: 12),
+              _field(_titleCtrl, 'Kichwa cha Habari', Icons.title_rounded),
+              const SizedBox(height: 10),
+              _field(_bodyCtrl, 'Ujumbe', Icons.notes_rounded, maxLines: 3),
+              const SizedBox(height: 10),
+              InkWell(
+                borderRadius: BorderRadius.circular(12),
+                onTap: () async {
+                  final picked = await showModalBottomSheet<Map<String, dynamic>?>(
+                    context: context,
+                    backgroundColor: AppColors.bgCard,
+                    builder: (_) => _TargetPicker(businesses: widget.businesses),
+                  );
+                  if (mounted) setState(() => _target = picked);
+                },
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+                  decoration: BoxDecoration(color: AppColors.bg, borderRadius: BorderRadius.circular(12), border: Border.all(color: AppColors.border)),
+                  child: Row(children: [
+                    Icon(Icons.campaign_outlined, color: AppColors.textMuted, size: 18),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(_target == null ? 'Lengo: Biashara Zote' : 'Lengo: ${_target!['business_name']}',
+                          style: TextStyle(color: AppColors.textWhite, fontSize: 13)),
+                    ),
+                    Icon(Icons.chevron_right_rounded, color: AppColors.textMuted),
+                  ]),
+                ),
+              ),
+              const SizedBox(height: 14),
+              SizedBox(
+                width: double.infinity,
+                height: 46,
+                child: ElevatedButton.icon(
+                  onPressed: _sending ? null : _send,
+                  style: ElevatedButton.styleFrom(backgroundColor: AppColors.primary, foregroundColor: Colors.white),
+                  icon: _sending
+                      ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                      : const Icon(Icons.send_rounded, size: 18),
+                  label: Text(_sending ? 'Inatuma...' : 'Tuma Tangazo', style: const TextStyle(fontWeight: FontWeight.bold)),
+                ),
+              ),
+            ]),
+          ),
+          const SizedBox(height: 18),
+          Text('Historia ya Matangazo', style: TextStyle(color: AppColors.textWhite, fontWeight: FontWeight.w800, fontSize: 14)),
+          const SizedBox(height: 10),
+          if (_loadingHistory)
+            const Center(child: Padding(padding: EdgeInsets.all(20), child: CircularProgressIndicator(color: AppColors.primary)))
+          else if (_history.isEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 20),
+              child: Text('Hakuna tangazo bado', style: TextStyle(color: AppColors.textMuted)),
+            )
+          else
+            for (final a in _history) _announcementRow(a),
+        ],
+      ),
+    );
+  }
+
+  Widget _field(TextEditingController ctrl, String label, IconData icon, {int maxLines = 1}) => TextField(
+        controller: ctrl,
+        maxLines: maxLines,
+        style: TextStyle(color: AppColors.textWhite, fontSize: 13),
+        decoration: InputDecoration(
+          labelText: label,
+          labelStyle: TextStyle(color: AppColors.textMuted, fontSize: 12),
+          prefixIcon: Icon(icon, color: AppColors.textMuted, size: 18),
+          filled: true, fillColor: AppColors.bg,
+          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: AppColors.border)),
+          enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: AppColors.border)),
+        ),
+      );
+
+  Widget _announcementRow(Map<String, dynamic> a) {
+    final sent = (a['sent_count'] as num?)?.toInt() ?? 0;
+    final failed = (a['failed_count'] as num?)?.toInt() ?? 0;
+    final configured = a['fcm_configured'] == true;
+    final date = DateTime.tryParse('${a['created_at']}');
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(color: AppColors.bgCard, borderRadius: BorderRadius.circular(14), border: Border.all(color: AppColors.border)),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Expanded(child: Text('${a['title']}', style: TextStyle(color: AppColors.textWhite, fontWeight: FontWeight.w700, fontSize: 13))),
+          Text(date == null ? '' : DateFormat('dd MMM, HH:mm').format(date), style: TextStyle(color: AppColors.textMuted, fontSize: 10.5)),
+        ]),
+        const SizedBox(height: 4),
+        Text('${a['body']}', style: TextStyle(color: AppColors.textMuted, fontSize: 12), maxLines: 2, overflow: TextOverflow.ellipsis),
+        const SizedBox(height: 6),
+        Row(children: [
+          Text(a['business_name'] != null ? 'Lengo: ${a['business_name']}' : 'Lengo: Biashara Zote',
+              style: TextStyle(color: AppColors.chartBlue, fontSize: 10.5)),
+          const Spacer(),
+          if (!configured)
+            Text('Halijatumwa', style: TextStyle(color: AppColors.chartOrange, fontSize: 10.5, fontWeight: FontWeight.w700))
+          else
+            Text('Vifaa: $sent/${sent + failed}', style: TextStyle(color: AppColors.accent, fontSize: 10.5, fontWeight: FontWeight.w700)),
+        ]),
+      ]),
+    );
+  }
+}
+
+class _TargetPicker extends StatelessWidget {
+  final List<Map<String, dynamic>> businesses;
+  const _TargetPicker({required this.businesses});
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
+        Padding(
+          padding: const EdgeInsets.all(16),
+          child: Text('Chagua Lengo la Tangazo', style: TextStyle(color: AppColors.textWhite, fontWeight: FontWeight.w800, fontSize: 15)),
+        ),
+        ListTile(
+          leading: Icon(Icons.public_rounded, color: AppColors.accent),
+          title: Text('Biashara Zote', style: TextStyle(color: AppColors.textWhite)),
+          onTap: () => Navigator.pop(context, null),
+        ),
+        const Divider(height: 1),
+        Flexible(
+          child: ListView.builder(
+            shrinkWrap: true,
+            itemCount: businesses.length,
+            itemBuilder: (_, i) {
+              final b = businesses[i];
+              return ListTile(
+                leading: Icon(Icons.storefront_outlined, color: AppColors.textMuted),
+                title: Text('${b['business_name']}', style: TextStyle(color: AppColors.textWhite, fontSize: 13)),
+                onTap: () => Navigator.pop(context, b),
+              );
+            },
+          ),
+        ),
+      ]),
     );
   }
 }
@@ -1206,7 +1677,7 @@ class _SubscriptionActionSheetState extends State<_SubscriptionActionSheet> {
   late int? _planId = widget.plans.isNotEmpty
       ? widget.plans.first['plan_id'] as int
       : null;
-  final _daysCtrl = TextEditingController(text: '30');
+  final _daysCtrl = TextEditingController(text: '90');
   bool _saving = false;
 
   @override

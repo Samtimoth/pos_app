@@ -231,7 +231,8 @@ class _FormTabState extends State<_FormTab> {
   bool _barcFocused = false;
   XFile?                   _imageFile;
   final List<_PageUnitRow> _sellingUnits = [];
-  bool get _canScan => !kIsWeb && (Platform.isAndroid || Platform.isIOS);
+  /// Native gallery/camera image pickers (desktop uses a file dialog).
+  bool get _isMobile => !kIsWeb && (Platform.isAndroid || Platform.isIOS);
 
   void _onBarcFocus() => setState(() => _barcFocused = _barcodeFocus.hasFocus);
 
@@ -802,7 +803,7 @@ class _FormTabState extends State<_FormTab> {
 
           // Preview
           GestureDetector(
-            onTap: _canScan ? _pickImageFromGallery : _pickImageDesktop,
+            onTap: _isMobile ? _pickImageFromGallery : _pickImageDesktop,
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 200),
               height: 150,
@@ -841,7 +842,7 @@ class _FormTabState extends State<_FormTab> {
           const SizedBox(height: 10),
 
           // Pick buttons
-          if (_canScan)
+          if (_isMobile)
             Row(children: [
               Expanded(child: _imgPickBtn(
                 icon: Icons.camera_alt_rounded,

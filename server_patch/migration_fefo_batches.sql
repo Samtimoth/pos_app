@@ -1,0 +1,31 @@
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Hatua 3: FEFO (First-Expiry-First-Out) + kuunganisha vyanzo vya batch.
+-- Hakuna schema mpya inayohitajika — hii ni maelezo ya mabadiliko ya PHP tu.
+-- ═══════════════════════════════════════════════════════════════════════════
+
+-- Tatizo lililokutwa (2026-09-16): kulikuwa na jedwali MBILI tofauti za
+-- "batch": `product_batches` (ina `remaining`, ndiyo inayotumiwa na FIFO
+-- deduction ya create_sale.php na get_product_batches.php's stock card) na
+-- `tbl_product_stock_batch` (log tu ya kuongeza stock, HAINA `remaining`,
+-- haisomwi na FIFO wala stock card). Stock iliyoongezwa wakati wa
+-- kutengeneza bidhaa mpya (add_product.php) au bulk import
+-- (import_products.php) iliandikwa KWENYE tbl_product_stock_batch pekee —
+-- haikuonekana kabisa kwenye FIFO/expiry tracking.
+--
+-- Suluhisho (additive, si uharibifu): `helpers/batches.php` (function
+-- mpya `product_batch_add()`) — add_product.php na import_products.php sasa
+-- zinaandika KWENYE `product_batches` PIA (bila kuondoa maandishi ya zamani
+-- kwenye tbl_product_stock_batch, kwa usalama — kitu kingine kinaweza
+-- kuwa kinaisoma bado). `add_stock.php` (haiitwi na app — dead code
+-- iliyothibitishwa kwa grep) haikuguswa.
+--
+-- FEFO: create_sale.php na get_product_batches.php sasa zina-ORDER BY
+--   (expiry_date IS NULL) ASC, expiry_date ASC, date_added ASC
+-- badala ya `date_added ASC` peke yake — batches zenye tarehe ya kuisha
+-- zinatumika/kuonyeshwa kwanza (zinazokaribia kuisha kwanza), na batches
+-- zisizo na tarehe (bidhaa zisizooza) zinabaki mwisho, FIFO miongoni mwao.
+--
+-- Reversal: rudisha ORDER BY kuwa `date_added ASC` peke yake; toa call za
+-- product_batch_add() kwenye add_product.php/import_products.php (hazina
+-- madhara kwa data iliyopo — ni batches za ziada tu, hazibadilishi
+-- tbl_product.stock wala tbl_product_stock_batch).

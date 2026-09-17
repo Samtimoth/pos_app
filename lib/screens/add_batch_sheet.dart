@@ -2,10 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import '../models/product.dart';
+import '../models/supplier.dart';
 import '../providers/app_provider.dart';
 import '../theme/app_theme.dart';
 import '../l10n/app_l10n.dart';
 import '../utils/cat_style.dart';
+import 'suppliers_screen.dart';
 
 class AddBatchSheet extends StatefulWidget {
   final Product product;
@@ -49,6 +51,7 @@ class _AddBatchSheetState extends State<AddBatchSheet> {
   final _apiDateFmt = DateFormat('yyyy-MM-dd');
 
   String _expiryApiDate = '';
+  int? _pickedSupplierId;
   bool _saving = false;
 
   @override
@@ -99,7 +102,7 @@ class _AddBatchSheetState extends State<AddBatchSheet> {
     if (app.api == null || app.selectedBusiness == null) return;
 
     final notes = [
-      if (_supplierCtr.text.trim().isNotEmpty)
+      if (_pickedSupplierId == null && _supplierCtr.text.trim().isNotEmpty)
         'Supplier: ${_supplierCtr.text.trim()}',
       if (_mfgCtr.text.trim().isNotEmpty) 'Mfg date: ${_mfgCtr.text.trim()}',
       if (_notesCtr.text.trim().isNotEmpty) _notesCtr.text.trim(),
@@ -115,6 +118,7 @@ class _AddBatchSheetState extends State<AddBatchSheet> {
         batchNumber: _batchCtr.text.trim(),
         expiryDate: _expiryApiDate,
         notes: notes,
+        supplierId: _pickedSupplierId,
       );
       if (!mounted) return;
       if (res['success'] == true) {
@@ -146,6 +150,17 @@ class _AddBatchSheetState extends State<AddBatchSheet> {
     } finally {
       if (mounted) setState(() => _saving = false);
     }
+  }
+
+  Future<void> _pickSupplier() async {
+    final picked = await Navigator.of(context).push<Supplier>(
+      MaterialPageRoute(builder: (_) => const SuppliersScreen(pickMode: true)),
+    );
+    if (picked == null || !mounted) return;
+    setState(() {
+      _pickedSupplierId = picked.supplierId;
+      _supplierCtr.text = picked.name;
+    });
   }
 
   Future<void> _pickManufactureDate() async {
@@ -303,6 +318,9 @@ class _AddBatchSheetState extends State<AddBatchSheet> {
                     _Field(
                       ctrl: _supplierCtr,
                       label: l.isSw ? 'Mtoa Huduma / Supplier' : 'Supplier',
+                      readOnly: true,
+                      suffixIcon: Icons.local_shipping_outlined,
+                      onTap: _pickSupplier,
                     ),
                     const SizedBox(height: 12),
                     _Field(

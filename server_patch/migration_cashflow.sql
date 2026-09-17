@@ -1,0 +1,43 @@
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Mtiririko wa Pesa kwa aina ya malipo (Cash Flow by payment method) —
+-- Hatua 5 "accounts". Jedwali zinajiunda zenyewe (self-healing), hakuna
+-- schema ya kuendesha kwa mkono.
+-- ═══════════════════════════════════════════════════════════════════════════
+
+-- 1) sale_payments sasa ni ORODHA KAMILI ya "pesa ndani" (money in), si
+--    split payments pekee kama awali. `helpers/sale_payments.php` ina
+--    sale_payment_log() inayoitwa na:
+--      - create_sale.php: kila mauzo yanayolipwa (methodi moja au
+--        split payments zote)
+--      - sale_action.php: record_payment, collect_cash, confirm_bank_transfer
+--    Jedwali (huundwa likikosekana):
+--      sale_payments(sale_payment_id, sale_id, business_id, method,
+--        amount, tendered, reference, user_id, created_at)
+--
+-- 2) tbl_expenses ina column mpya `payment_method VARCHAR(20) DEFAULT
+--    'cash'` (self-healing ALTER TABLE ndani ya expenses.php). Matumizi
+--    ya ZAMANI (kabla ya mabadiliko haya) yanaonekana kama 'cash' kwa
+--    default — si sahihi kihistoria kwa yale yaliyolipwa benki/simu,
+--    lakini hayapotezi jumla (amount haibadiliki, ni method tag tu).
+--
+-- 3) cashflow.php (endpoint mpya) — GET
+--    ?business_id=..&branch_id=..&date_from=..&date_to=..
+--    Inarudisha:
+--      in:  sale_payments zilizogawanywa kwa method (pesa halisi
+--           iliyoingia, si "mauzo" ya jumla — mauzo ya mkopo
+--           yasiyolipwa hayaonekani hapa mpaka yalipwe)
+--      out: purchase_payments (kwa wasambazaji) + tbl_expenses
+--           zilizogawanywa kwa method
+--      net: in - out, kwa kila method
+--
+-- Athari kwa data ya ZAMANI: mauzo yaliyofanyika KABLA ya deploy hii
+-- (isipokuwa yale ya split-payment ambayo tayari yalikuwa yanaandika
+-- sale_payments) HAYANA rekodi ya sale_payments — "in" itaonekana chini
+-- ya ukweli kwa vipindi vya nyuma. Mauzo MAPYA kuanzia sasa (2026-09-16)
+-- yote yanaandikwa kikamilifu.
+--
+-- Reversal: futa (DROP TABLE) sale_payments haihitajiki — ni ziada tu,
+-- haiathiri tbl_sales/tbl_sale_items. Kuondoa feature: rudisha
+-- create_sale.php/sale_action.php kwenye toleo la awali (git history),
+-- futa cashflow.php kwenye server, achana na payment_method column
+-- kwenye tbl_expenses (si lazima kuifuta — haiathiri kitu ikiachwa).

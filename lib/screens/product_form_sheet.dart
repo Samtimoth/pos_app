@@ -59,7 +59,10 @@ class _AddProductSheetState extends State<AddProductSheet> {
   bool _barcodeFocused = false; // desktop: scan card highlight when focused
   XFile? _imageFile;             // newly picked local image (not yet uploaded)
 
-  bool get _canScan => !kIsWeb && (Platform.isAndroid || Platform.isIOS);
+  /// Camera barcode scanning: phones + web browsers (mobile_scanner/ZXing).
+  bool get _canScan => kIsWeb || Platform.isAndroid || Platform.isIOS;
+  /// Native gallery/camera image pickers (desktop uses a file dialog).
+  bool get _isMobile => !kIsWeb && (Platform.isAndroid || Platform.isIOS);
 
   void _onBarcodeChanged()     => setState(() {});
   void _onBarcodeFocusChange() => setState(() => _barcodeFocused = _barcodeFocusNode.hasFocus);
@@ -549,7 +552,9 @@ class _AddProductSheetState extends State<AddProductSheet> {
                         icon: Icons.storefront_outlined,
                         keyboardType: TextInputType.number),
                     const SizedBox(height: 10),
-                    _ProfitPreview(buyCtr: _buyPriceCtr, sellCtr: _sellPriceCtr),
+                    // Faida ya moja kwa moja — wanao ruhusa pekee (Hatua 1)
+                    if (context.read<AppProvider>().user?.canSeeCosts ?? false)
+                      _ProfitPreview(buyCtr: _buyPriceCtr, sellCtr: _sellPriceCtr),
                   ]),
                 ))),
 
@@ -676,7 +681,7 @@ class _AddProductSheetState extends State<AddProductSheet> {
 
           // Image preview area
           GestureDetector(
-            onTap: _canScan ? _pickImageFromGallery : _pickImageDesktop,
+            onTap: _isMobile ? _pickImageFromGallery : _pickImageDesktop,
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 200),
               height: 160,
@@ -708,7 +713,7 @@ class _AddProductSheetState extends State<AddProductSheet> {
 
           const SizedBox(height: 10),
           // Pick buttons
-          if (_canScan)
+          if (_isMobile)
             Row(children: [
               Expanded(child: _imgPickBtn(
                 icon: Icons.camera_alt_rounded,

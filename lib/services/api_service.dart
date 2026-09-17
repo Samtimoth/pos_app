@@ -1,13 +1,56 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'device_id_service.dart';
+import 'storage_service.dart';
+
+/// Imetumwa na server (401): token haipo/imeisha — mtumiaji aingie tena.
+class AuthException implements Exception {
+  final String message;
+  AuthException([this.message = 'Muda wa kuingia umeisha. Tafadhali ingia tena.']);
+  @override
+  String toString() => message;
+}
 
 class ApiService {
   final String baseUrl; // e.g. http://192.168.1.100/pos/api
+  final http.Client _client;
 
-  ApiService(this.baseUrl);
+  /// [client] is injectable so tests can fake the server.
+  ApiService(this.baseUrl, {http.Client? client})
+      : _client = client ?? http.Client();
 
-  Map<String, String> get _headers => {'Content-Type': 'application/json'};
+  // ── Auth token (Hatua 1) ──────────────────────────────
+  // Token hutolewa na login.php na kutumwa kama Bearer kwenye kila ombi.
+  static String? _token;
+  static String? get authToken => _token;
+
+  static void setToken(String? token) {
+    _token = (token != null && token.isNotEmpty) ? token : null;
+    if (_token != null) {
+      StorageService.saveString('auth_token', _token!);
+    } else {
+      StorageService.remove('auth_token');
+    }
+  }
+
+  static void loadSavedToken() {
+    _token = StorageService.getString('auth_token');
+  }
+
+  Map<String, String> get _headers => {
+        'Content-Type': 'application/json',
+        if (_token != null) 'Authorization': 'Bearer $_token',
+      };
+
+  /// Decode response; 401 inatupa [AuthException] (session imeisha).
+  dynamic _decode(http.Response res) {
+    if (res.statusCode == 401) throw AuthException();
+    return jsonDecode(res.body);
+  }
+
+  void _applyAuthHeader(http.MultipartRequest req) {
+    if (_token != null) req.headers['Authorization'] = 'Bearer $_token';
+  }
 
   // ── Auth ──────────────────────────────────────────────
   Future<Map<String, dynamic>> register({
@@ -23,7 +66,7 @@ class ApiService {
     required String country,
     required String currency,
   }) async {
-    final res = await http
+    final res = await _client
         .post(
           Uri.parse('$baseUrl/register.php'),
           headers: _headers,
@@ -42,12 +85,12 @@ class ApiService {
           }),
         )
         .timeout(const Duration(seconds: 20));
-    return jsonDecode(res.body) as Map<String, dynamic>;
+    return _decode(res) as Map<String, dynamic>;
   }
 
   Future<Map<String, dynamic>> login(String username, String password) async {
     final deviceId = await DeviceIdService.getDeviceId();
-    final res = await http
+    final res = await _client
         .post(
           Uri.parse('$baseUrl/login.php'),
           headers: _headers,
@@ -59,19 +102,27 @@ class ApiService {
           }),
         )
         .timeout(const Duration(seconds: 15));
-    return jsonDecode(res.body) as Map<String, dynamic>;
+    // Login: 401 inaweza kuwa "password si sahihi" — acha JSON iendelee.
+    final parsed = jsonDecode(res.body);
+    if (parsed is Map<String, dynamic> &&
+        parsed['success'] == true &&
+        parsed['data'] is Map) {
+      final t = (parsed['data'] as Map)['auth_token'];
+      if (t is String && t.isNotEmpty) setToken(t);
+    }
+    return parsed as Map<String, dynamic>;
   }
 
   // ── My Businesses ─────────────────────────────────────
   Future<Map<String, dynamic>> getMyBusinesses(int userId) async {
-    final res = await http
+    final res = await _client
         .post(
           Uri.parse('$baseUrl/my_businesses.php'),
           headers: _headers,
           body: jsonEncode({'user_id': userId}),
         )
         .timeout(const Duration(seconds: 15));
-    return jsonDecode(res.body) as Map<String, dynamic>;
+    return _decode(res) as Map<String, dynamic>;
   }
 
   // ── Dashboard ─────────────────────────────────────────
@@ -81,8 +132,8 @@ class ApiService {
     if (dateFrom != null) params['date_from'] = dateFrom;
     if (dateTo != null) params['date_to'] = dateTo;
     final uri = Uri.parse('$baseUrl/dashboard.php').replace(queryParameters: params);
-    final res = await http.get(uri).timeout(const Duration(seconds: 15));
-    return jsonDecode(res.body) as Map<String, dynamic>;
+    final res = await _client.get(uri).timeout(const Duration(seconds: 15));
+    return _decode(res) as Map<String, dynamic>;
   }
 
   // ── Products ──────────────────────────────────────────
@@ -92,8 +143,8 @@ class ApiService {
     if (search.isNotEmpty) params['search'] = search;
     if (category != null && category.isNotEmpty) params['category'] = category;
     final uri = Uri.parse('$baseUrl/get_products.php').replace(queryParameters: params);
-    final res = await http.get(uri).timeout(const Duration(seconds: 15));
-    final body = jsonDecode(res.body) as Map<String, dynamic>;
+    final res = await _client.get(uri).timeout(const Duration(seconds: 15));
+    final body = _decode(res) as Map<String, dynamic>;
     if (body['success'] == true) return body['products'] as List;
     throw Exception(body['message'] ?? 'Imeshindwa kupata bidhaa');
   }
@@ -102,8 +153,8 @@ class ApiService {
   Future<List<dynamic>> getCategories(int businessId) async {
     final uri = Uri.parse('$baseUrl/get_categories.php')
         .replace(queryParameters: {'business_id': businessId.toString()});
-    final res = await http.get(uri).timeout(const Duration(seconds: 15));
-    final body = jsonDecode(res.body) as Map<String, dynamic>;
+    final res = await _client.get(uri).timeout(const Duration(seconds: 15));
+    final body = _decode(res) as Map<String, dynamic>;
     if (body['success'] == true) return body['categories'] as List;
     return [];
   }
@@ -117,8 +168,8 @@ class ApiService {
     if (dateTo != null) params['date_to'] = dateTo;
     if (status != null) params['status'] = status;
     final uri = Uri.parse('$baseUrl/get_sales.php').replace(queryParameters: params);
-    final res = await http.get(uri).timeout(const Duration(seconds: 15));
-    final body = jsonDecode(res.body) as Map<String, dynamic>;
+    final res = await _client.get(uri).timeout(const Duration(seconds: 15));
+    final body = _decode(res) as Map<String, dynamic>;
     if (body['success'] == true) return body['sales'] as List;
     return [];
   }
@@ -131,8 +182,15 @@ class ApiService {
     required String transactionType, // cash | loan | slow_payment
     required List<Map<String, dynamic>> items,
     double? amountPaid,
+    String? clientOpId,
+    String? createdAt,
+    String customerPhone = '',
+    int? customerId,
+    List<Map<String, dynamic>>? payments,
+    double? overallDiscount,
+    String? managerPin,
   }) async {
-    final res = await http
+    final res = await _client
         .post(
           Uri.parse('$baseUrl/create_sale.php'),
           headers: _headers,
@@ -140,14 +198,21 @@ class ApiService {
             'business_id': businessId,
             'branch_id': branchId,
             'customer_name': customerName,
+            'customer_phone': customerPhone,
+            'customer_id': ?customerId,
             'customer_type': 'normal',
             'transaction_type': transactionType,
             'items': items,
             'amount_paid': amountPaid,
+            'client_op_id': ?clientOpId,
+            'created_at': ?createdAt,
+            if (payments != null && payments.isNotEmpty) 'payments': payments,
+            if (overallDiscount != null && overallDiscount > 0) 'overall_discount': overallDiscount,
+            if (managerPin != null && managerPin.isNotEmpty) 'manager_pin': managerPin,
           }),
         )
         .timeout(const Duration(seconds: 30));
-    return jsonDecode(res.body) as Map<String, dynamic>;
+    return _decode(res) as Map<String, dynamic>;
   }
 
   // ── Add single product (multipart) ───────────────────────
@@ -167,9 +232,12 @@ class ApiService {
     double? wholesalePrice,
     String expiryDate     = '',
     String? imagePath,
+    String? clientOpId,
   }) async {
     final req = http.MultipartRequest(
       'POST', Uri.parse('$baseUrl/add_product.php'));
+    _applyAuthHeader(req);
+    if (clientOpId != null) req.fields['client_op_id'] = clientOpId;
     req.fields.addAll({
       'business_id':      businessId.toString(),
       'branch_id':        branchId.toString(),
@@ -193,9 +261,9 @@ class ApiService {
     if (imagePath != null && imagePath.isNotEmpty) {
       req.files.add(await http.MultipartFile.fromPath('image', imagePath));
     }
-    final streamed = await req.send().timeout(const Duration(seconds: 60));
+    final streamed = await _client.send(req).timeout(const Duration(seconds: 60));
     final res      = await http.Response.fromStream(streamed);
-    return jsonDecode(res.body) as Map<String, dynamic>;
+    return _decode(res) as Map<String, dynamic>;
   }
 
   // ── Update product (multipart) ────────────────────────────────────────────────
@@ -216,9 +284,12 @@ class ApiService {
     double? wholesalePrice,
     String expiryDate     = '',
     String? imagePath,
+    String? clientOpId,
   }) async {
     final req = http.MultipartRequest(
       'POST', Uri.parse('$baseUrl/update_product.php'));
+    _applyAuthHeader(req);
+    if (clientOpId != null) req.fields['client_op_id'] = clientOpId;
     req.fields.addAll({
       'product_id':       productId.toString(),
       'business_id':      businessId.toString(),
@@ -243,9 +314,9 @@ class ApiService {
     if (imagePath != null && imagePath.isNotEmpty) {
       req.files.add(await http.MultipartFile.fromPath('image', imagePath));
     }
-    final streamed = await req.send().timeout(const Duration(seconds: 60));
+    final streamed = await _client.send(req).timeout(const Duration(seconds: 60));
     final res      = await http.Response.fromStream(streamed);
-    return jsonDecode(res.body) as Map<String, dynamic>;
+    return _decode(res) as Map<String, dynamic>;
   }
 
   // ── Product Batch ─────────────────────────────────────────────────────────────
@@ -257,8 +328,10 @@ class ApiService {
     String batchNumber = '',
     String expiryDate  = '',
     String notes       = '',
+    String? clientOpId,
+    int? supplierId,
   }) async {
-    final res = await http
+    final res = await _client
         .post(
           Uri.parse('$baseUrl/add_product_batch.php'),
           headers: _headers,
@@ -270,10 +343,12 @@ class ApiService {
             'batch_number': batchNumber,
             'expiry_date':  expiryDate,
             'notes':        notes,
+            'client_op_id': ?clientOpId,
+            'supplier_id':  ?supplierId,
           }),
         )
         .timeout(const Duration(seconds: 20));
-    return jsonDecode(res.body) as Map<String, dynamic>;
+    return _decode(res) as Map<String, dynamic>;
   }
 
   Future<List<dynamic>> getProductBatches(int productId, int businessId) async {
@@ -284,8 +359,8 @@ class ApiService {
           'business_id': businessId.toString(),
         },
       );
-      final res  = await http.get(uri).timeout(const Duration(seconds: 15));
-      final body = jsonDecode(res.body) as Map<String, dynamic>;
+      final res  = await _client.get(uri).timeout(const Duration(seconds: 15));
+      final body = _decode(res) as Map<String, dynamic>;
       if (body['success'] == true) return body['batches'] as List? ?? [];
     } catch (_) {}
     return [];
@@ -298,8 +373,9 @@ class ApiService {
     required int    productId,
     required int    businessId,
     required List<Map<String, dynamic>> units,
+    String? clientOpId,
   }) async {
-    final res = await http
+    final res = await _client
         .post(
           Uri.parse('$baseUrl/manage_product_units.php'),
           headers: _headers,
@@ -308,28 +384,31 @@ class ApiService {
             'product_id':  productId,
             'business_id': businessId,
             'units':       units,
+            'client_op_id': ?clientOpId,
           }),
         )
         .timeout(const Duration(seconds: 20));
-    return jsonDecode(res.body) as Map<String, dynamic>;
+    return _decode(res) as Map<String, dynamic>;
   }
 
   // ── Delete product ───────────────────────────────────────────────────────────
   Future<Map<String, dynamic>> deleteProduct({
     required int productId,
     required int businessId,
+    String? clientOpId,
   }) async {
-    final res = await http
+    final res = await _client
         .post(
           Uri.parse('$baseUrl/delete_product.php'),
           headers: _headers,
           body: jsonEncode({
             'product_id':  productId,
             'business_id': businessId,
+            'client_op_id': ?clientOpId,
           }),
         )
         .timeout(const Duration(seconds: 15));
-    return jsonDecode(res.body) as Map<String, dynamic>;
+    return _decode(res) as Map<String, dynamic>;
   }
 
   // ── Bulk import products (JSON) ───────────────────────────
@@ -337,25 +416,27 @@ class ApiService {
     required int    businessId,
     required int    branchId,
     required List<Map<String, dynamic>> products,
+    String? clientOpId,
   }) async {
-    final res = await http.post(
+    final res = await _client.post(
       Uri.parse('$baseUrl/import_products.php'),
       headers: _headers,
       body: jsonEncode({
         'business_id': businessId,
         'branch_id':   branchId,
         'products':    products,
+        'client_op_id': ?clientOpId,
       }),
     ).timeout(const Duration(seconds: 60));
-    return jsonDecode(res.body) as Map<String, dynamic>;
+    return _decode(res) as Map<String, dynamic>;
   }
 
   // ── Units ─────────────────────────────────────────────────
   Future<List<String>> getUnits(int businessId) async {
     final uri = Uri.parse('$baseUrl/get_units.php')
         .replace(queryParameters: {'business_id': businessId.toString()});
-    final res  = await http.get(uri).timeout(const Duration(seconds: 10));
-    final body = jsonDecode(res.body) as Map<String, dynamic>;
+    final res  = await _client.get(uri).timeout(const Duration(seconds: 10));
+    final body = _decode(res) as Map<String, dynamic>;
     if (body['success'] == true) {
       return (body['units'] as List)
           .map((u) => (u['name'] as String? ?? '').trim())
@@ -370,71 +451,114 @@ class ApiService {
     int saleId,
     String action, {
     double? amount,
+    String? note,
+    String? clientOpId,
   }) async {
     final body = <String, dynamic>{'sale_id': saleId, 'action': action};
     if (amount != null) body['amount'] = amount;
-    final res = await http
+    if (note != null && note.isNotEmpty) body['note'] = note;
+    if (clientOpId != null) body['client_op_id'] = clientOpId;
+    final res = await _client
         .post(Uri.parse('$baseUrl/sale_action.php'),
             headers: _headers, body: jsonEncode(body))
         .timeout(const Duration(seconds: 20));
-    return jsonDecode(res.body) as Map<String, dynamic>;
+    return _decode(res) as Map<String, dynamic>;
   }
 
   // ── Sale Detail (items) ───────────────────────────────────────────
   Future<Map<String, dynamic>> getSaleDetail(int saleId) async {
     final uri = Uri.parse('$baseUrl/get_sale_detail.php')
         .replace(queryParameters: {'sale_id': saleId.toString()});
-    final res = await http.get(uri).timeout(const Duration(seconds: 15));
-    return jsonDecode(res.body) as Map<String, dynamic>;
+    final res = await _client.get(uri).timeout(const Duration(seconds: 15));
+    return _decode(res) as Map<String, dynamic>;
+  }
+
+  // ── Sale Returns / Refunds (marejesho ya bidhaa) ───────────────────
+  /// [items]: [{item_id, product_id, quantity}] — partial return supported.
+  /// Requires network (no offline queue: returns depend on the original
+  /// sale already being synced server-side).
+  Future<Map<String, dynamic>> createSaleReturn({
+    required int saleId,
+    required List<Map<String, dynamic>> items,
+    String reason = '',
+    String? clientOpId,
+  }) async {
+    final res = await _client
+        .post(
+          Uri.parse('$baseUrl/sale_returns.php'),
+          headers: _headers,
+          body: jsonEncode({
+            'action': 'create',
+            'sale_id': saleId,
+            'items': items,
+            'reason': reason,
+            'client_op_id': ?clientOpId,
+          }),
+        )
+        .timeout(const Duration(seconds: 20));
+    return _decode(res) as Map<String, dynamic>;
+  }
+
+  Future<List<dynamic>> getSaleReturns(int saleId) async {
+    try {
+      final uri = Uri.parse('$baseUrl/sale_returns.php')
+          .replace(queryParameters: {'action': 'list', 'sale_id': saleId.toString()});
+      final res = await _client.get(uri).timeout(const Duration(seconds: 15));
+      final body = _decode(res) as Map<String, dynamic>;
+      if (body['success'] == true) return body['returns'] as List? ?? [];
+    } catch (_) {}
+    return [];
   }
 
   // ── Category CRUD ─────────────────────────────────────────────────
   Future<Map<String, dynamic>> manageCategory(int businessId, String action,
-      {int? id, String? name}) async {
+      {int? id, String? name, String? clientOpId}) async {
     final body = <String, dynamic>{
       'business_id': businessId,
       'action': action,
       'id': id,
       'name': name,
+      'client_op_id': clientOpId,
     }..removeWhere((_, v) => v == null);
-    final res = await http
+    final res = await _client
         .post(Uri.parse('$baseUrl/manage_categories.php'),
             headers: _headers, body: jsonEncode(body))
         .timeout(const Duration(seconds: 15));
-    return jsonDecode(res.body) as Map<String, dynamic>;
+    return _decode(res) as Map<String, dynamic>;
   }
 
   Future<List<dynamic>> listCategories(int businessId) async {
     final uri = Uri.parse('$baseUrl/manage_categories.php').replace(
         queryParameters: {'action': 'list', 'business_id': businessId.toString()});
-    final res  = await http.get(uri).timeout(const Duration(seconds: 15));
-    final body = jsonDecode(res.body) as Map<String, dynamic>;
+    final res  = await _client.get(uri).timeout(const Duration(seconds: 15));
+    final body = _decode(res) as Map<String, dynamic>;
     if (body['success'] == true) return body['categories'] as List;
     return [];
   }
 
   // ── Unit CRUD ─────────────────────────────────────────────────────
   Future<Map<String, dynamic>> manageUnit(int businessId, String action,
-      {int? id, String? name, String? shortName}) async {
+      {int? id, String? name, String? shortName, String? clientOpId}) async {
     final body = <String, dynamic>{
       'business_id': businessId,
       'action': action,
       'id': id,
       'name': name,
       'short_name': shortName,
+      'client_op_id': clientOpId,
     }..removeWhere((_, v) => v == null);
-    final res = await http
+    final res = await _client
         .post(Uri.parse('$baseUrl/manage_units.php'),
             headers: _headers, body: jsonEncode(body))
         .timeout(const Duration(seconds: 15));
-    return jsonDecode(res.body) as Map<String, dynamic>;
+    return _decode(res) as Map<String, dynamic>;
   }
 
   Future<List<dynamic>> listUnits(int businessId) async {
     final uri = Uri.parse('$baseUrl/manage_units.php').replace(
         queryParameters: {'action': 'list', 'business_id': businessId.toString()});
-    final res  = await http.get(uri).timeout(const Duration(seconds: 15));
-    final body = jsonDecode(res.body) as Map<String, dynamic>;
+    final res  = await _client.get(uri).timeout(const Duration(seconds: 15));
+    final body = _decode(res) as Map<String, dynamic>;
     if (body['success'] == true) return body['units'] as List;
     return [];
   }
@@ -446,9 +570,23 @@ class ApiService {
     try {
       final uri = Uri.parse('$baseUrl/get_sale_payments.php')
           .replace(queryParameters: {'sale_id': saleId.toString()});
-      final res  = await http.get(uri).timeout(const Duration(seconds: 10));
-      final body = jsonDecode(res.body) as Map<String, dynamic>;
+      final res  = await _client.get(uri).timeout(const Duration(seconds: 10));
+      final body = _decode(res) as Map<String, dynamic>;
       if (body['success'] == true) return body['payments'] as List? ?? [];
+    } catch (_) {}
+    return [];
+  }
+
+  /// Split-payment breakdown (Cash/M-Pesa/Bank) recorded at checkout time,
+  /// if the sale used it — separate from [getSalePayments]'s repayment
+  /// history so callers can show "Cash 3,000 · M-Pesa 2,000" chips.
+  Future<List<dynamic>> getSalePaymentBreakdown(int saleId) async {
+    try {
+      final uri = Uri.parse('$baseUrl/get_sale_payments.php')
+          .replace(queryParameters: {'sale_id': saleId.toString()});
+      final res  = await _client.get(uri).timeout(const Duration(seconds: 10));
+      final body = _decode(res) as Map<String, dynamic>;
+      if (body['success'] == true) return body['breakdown'] as List? ?? [];
     } catch (_) {}
     return [];
   }
@@ -476,26 +614,26 @@ class ApiService {
       'role':               role,
       'branch_id':          branchId,
     }..removeWhere((_, v) => v == null);
-    final res = await http
+    final res = await _client
         .post(Uri.parse('$baseUrl/manage_staff.php'),
             headers: _headers, body: jsonEncode(body))
         .timeout(const Duration(seconds: 20));
-    return jsonDecode(res.body) as Map<String, dynamic>;
+    return _decode(res) as Map<String, dynamic>;
   }
 
   // ── My Subscription (owner-scoped overview) ────────────
   Future<Map<String, dynamic>> getMySubscription(int userId) async {
     final uri = Uri.parse('$baseUrl/get_my_subscription.php')
         .replace(queryParameters: {'user_id': userId.toString()});
-    final res = await http.get(uri).timeout(const Duration(seconds: 15));
-    return jsonDecode(res.body) as Map<String, dynamic>;
+    final res = await _client.get(uri).timeout(const Duration(seconds: 15));
+    return _decode(res) as Map<String, dynamic>;
   }
 
   // ── Plans ───────────────────────────────────────────────
   Future<List<Map<String, dynamic>>> getPlans() async {
-    final res = await http.get(Uri.parse('$baseUrl/get_plans.php'))
+    final res = await _client.get(Uri.parse('$baseUrl/get_plans.php'))
         .timeout(const Duration(seconds: 15));
-    final body = jsonDecode(res.body) as Map<String, dynamic>;
+    final body = _decode(res) as Map<String, dynamic>;
     if (body['success'] == true) {
       return (body['plans'] as List).map((e) => Map<String, dynamic>.from(e as Map)).toList();
     }
@@ -513,6 +651,7 @@ class ApiService {
   }) async {
     final req = http.MultipartRequest(
         'POST', Uri.parse('$baseUrl/submit_payment.php'));
+    _applyAuthHeader(req);
     req.fields.addAll({
       'user_id':     userId.toString(),
       'business_id': businessId.toString(),
@@ -523,16 +662,16 @@ class ApiService {
     if (proofPath != null && proofPath.isNotEmpty) {
       req.files.add(await http.MultipartFile.fromPath('proof', proofPath));
     }
-    final streamed = await req.send().timeout(const Duration(seconds: 60));
+    final streamed = await _client.send(req).timeout(const Duration(seconds: 60));
     final res      = await http.Response.fromStream(streamed);
-    return jsonDecode(res.body) as Map<String, dynamic>;
+    return _decode(res) as Map<String, dynamic>;
   }
 
   Future<Map<String, dynamic>> getMyPayments(int userId) async {
     final uri = Uri.parse('$baseUrl/get_my_payments.php')
         .replace(queryParameters: {'user_id': userId.toString()});
-    final res = await http.get(uri).timeout(const Duration(seconds: 15));
-    return jsonDecode(res.body) as Map<String, dynamic>;
+    final res = await _client.get(uri).timeout(const Duration(seconds: 15));
+    return _decode(res) as Map<String, dynamic>;
   }
 
   Future<Map<String, dynamic>> getSuperAdminPayments({
@@ -546,8 +685,8 @@ class ApiService {
         if (status.isNotEmpty) 'status': status,
       },
     );
-    final res = await http.get(uri).timeout(const Duration(seconds: 15));
-    return jsonDecode(res.body) as Map<String, dynamic>;
+    final res = await _client.get(uri).timeout(const Duration(seconds: 15));
+    return _decode(res) as Map<String, dynamic>;
   }
 
   Future<Map<String, dynamic>> reviewPayment({
@@ -555,7 +694,7 @@ class ApiService {
     required int paymentId,
     required String action,
   }) async {
-    final res = await http
+    final res = await _client
         .post(
           Uri.parse('$baseUrl/superadmin_payments.php'),
           headers: _headers,
@@ -566,15 +705,15 @@ class ApiService {
           }),
         )
         .timeout(const Duration(seconds: 20));
-    return jsonDecode(res.body) as Map<String, dynamic>;
+    return _decode(res) as Map<String, dynamic>;
   }
 
   // ── Super Admin: Dashboard Stats ───────────────────────
   Future<Map<String, dynamic>> getSuperAdminStats(int requesterUserId) async {
     final uri = Uri.parse('$baseUrl/superadmin_stats.php')
         .replace(queryParameters: {'requester_user_id': requesterUserId.toString()});
-    final res = await http.get(uri).timeout(const Duration(seconds: 15));
-    return jsonDecode(res.body) as Map<String, dynamic>;
+    final res = await _client.get(uri).timeout(const Duration(seconds: 15));
+    return _decode(res) as Map<String, dynamic>;
   }
 
   // ── Super Admin: Subscriptions ────────────────────────
@@ -588,8 +727,8 @@ class ApiService {
         if (q.isNotEmpty) 'q': q,
       },
     );
-    final res = await http.get(uri).timeout(const Duration(seconds: 15));
-    return jsonDecode(res.body) as Map<String, dynamic>;
+    final res = await _client.get(uri).timeout(const Duration(seconds: 15));
+    return _decode(res) as Map<String, dynamic>;
   }
 
   Future<Map<String, dynamic>> manageSubscription({
@@ -599,7 +738,7 @@ class ApiService {
     int? planId,
     int? days,
   }) async {
-    final res = await http
+    final res = await _client
         .post(
           Uri.parse('$baseUrl/superadmin_subscription.php'),
           headers: _headers,
@@ -612,7 +751,35 @@ class ApiService {
           }),
         )
         .timeout(const Duration(seconds: 20));
-    return jsonDecode(res.body) as Map<String, dynamic>;
+    return _decode(res) as Map<String, dynamic>;
+  }
+
+  // ── Matangazo ya SuperAdmin (push notifications) ────────
+  Future<Map<String, dynamic>> listAnnouncements() async {
+    final res = await _client
+        .get(Uri.parse('$baseUrl/announcements.php?action=list'), headers: _headers)
+        .timeout(const Duration(seconds: 15));
+    return _decode(res) as Map<String, dynamic>;
+  }
+
+  Future<Map<String, dynamic>> sendAnnouncement({
+    required String title,
+    required String body,
+    int? businessId,
+  }) async {
+    final res = await _client
+        .post(
+          Uri.parse('$baseUrl/announcements.php'),
+          headers: _headers,
+          body: jsonEncode({
+            'action': 'send',
+            'title': title,
+            'body': body,
+            'business_id': ?businessId,
+          }),
+        )
+        .timeout(const Duration(seconds: 30));
+    return _decode(res) as Map<String, dynamic>;
   }
 
   // ── Add Business ───────────────────────────────────────
@@ -622,7 +789,7 @@ class ApiService {
     String country = '',
     String address = '',
   }) async {
-    final res = await http
+    final res = await _client
         .post(
           Uri.parse('$baseUrl/business/create_business.php'),
           headers: _headers,
@@ -634,7 +801,7 @@ class ApiService {
           }),
         )
         .timeout(const Duration(seconds: 20));
-    return jsonDecode(res.body) as Map<String, dynamic>;
+    return _decode(res) as Map<String, dynamic>;
   }
 
   // ── Business Edit ─────────────────────────────────────
@@ -649,8 +816,9 @@ class ApiService {
     required String currency,
     String receiptHeader = '',
     String receiptFooter = '',
+    String? receiptTemplate,
   }) async {
-    final res = await http
+    final res = await _client
         .post(
           Uri.parse('$baseUrl/update_business.php'),
           headers: _headers,
@@ -665,18 +833,19 @@ class ApiService {
             'currency':       currency,
             'receipt_header': receiptHeader,
             'receipt_footer': receiptFooter,
+            'receipt_template': ?receiptTemplate,
           }),
         )
         .timeout(const Duration(seconds: 20));
-    return jsonDecode(res.body) as Map<String, dynamic>;
+    return _decode(res) as Map<String, dynamic>;
   }
 
   // ── Profile ───────────────────────────────────────────
   Future<Map<String, dynamic>> getProfile(int userId) async {
     final uri = Uri.parse('$baseUrl/get_profile.php')
         .replace(queryParameters: {'user_id': userId.toString()});
-    final res = await http.get(uri).timeout(const Duration(seconds: 15));
-    return jsonDecode(res.body) as Map<String, dynamic>;
+    final res = await _client.get(uri).timeout(const Duration(seconds: 15));
+    return _decode(res) as Map<String, dynamic>;
   }
 
   Future<Map<String, dynamic>> updateProfile({
@@ -686,7 +855,7 @@ class ApiService {
     String currentPassword = '',
     String newPassword = '',
   }) async {
-    final res = await http
+    final res = await _client
         .post(
           Uri.parse('$baseUrl/update_profile.php'),
           headers: _headers,
@@ -699,7 +868,128 @@ class ApiService {
           }),
         )
         .timeout(const Duration(seconds: 20));
-    return jsonDecode(res.body) as Map<String, dynamic>;
+    return _decode(res) as Map<String, dynamic>;
+  }
+
+  // ── Reports (sales / expenses / P&L) ──────────────────
+  Future<Map<String, dynamic>> getReport(int businessId,
+      {int? branchId, required String dateFrom, required String dateTo}) async {
+    final params = {
+      'business_id': businessId.toString(),
+      'date_from': dateFrom,
+      'date_to': dateTo,
+      if (branchId != null) 'branch_id': branchId.toString(),
+    };
+    final uri = Uri.parse('$baseUrl/reports.php').replace(queryParameters: params);
+    final res = await http.get(uri).timeout(const Duration(seconds: 30));
+    return _decode(res) as Map<String, dynamic>;
+  }
+
+  /// Cash flow by payment method (Hatua 5) — money in (sale_payments) vs
+  /// out (purchase_payments + expenses), for the same date range as reports.
+  Future<Map<String, dynamic>> getCashFlow(int businessId,
+      {int? branchId, required String dateFrom, required String dateTo}) async {
+    final params = {
+      'business_id': businessId.toString(),
+      'date_from': dateFrom,
+      'date_to': dateTo,
+      if (branchId != null) 'branch_id': branchId.toString(),
+    };
+    final uri = Uri.parse('$baseUrl/cashflow.php').replace(queryParameters: params);
+    final res = await http.get(uri).timeout(const Duration(seconds: 30));
+    return _decode(res) as Map<String, dynamic>;
+  }
+
+  Future<Map<String, dynamic>> getAccountSummary(int businessId, {String? asOf}) async {
+    final params = {
+      'business_id': businessId.toString(),
+      'as_of': ?asOf,
+    };
+    final uri = Uri.parse('$baseUrl/account_summary.php').replace(queryParameters: params);
+    final res = await http.get(uri).timeout(const Duration(seconds: 30));
+    return _decode(res) as Map<String, dynamic>;
+  }
+
+  Future<Map<String, dynamic>> getSlowStock(int businessId,
+      {int? branchId, int days = 60, int slowThresholdDays = 90}) async {
+    final params = {
+      'business_id': businessId.toString(),
+      'days': '$days',
+      'slow_threshold_days': '$slowThresholdDays',
+      if (branchId != null) 'branch_id': branchId.toString(),
+    };
+    final uri = Uri.parse('$baseUrl/slow_stock.php').replace(queryParameters: params);
+    final res = await http.get(uri).timeout(const Duration(seconds: 30));
+    return _decode(res) as Map<String, dynamic>;
+  }
+
+  // ── Expenses ──────────────────────────────────────────
+  Future<List<dynamic>> listExpenses(int businessId,
+      {int? branchId, String? dateFrom, String? dateTo}) async {
+    final params = {
+      'action': 'list',
+      'business_id': businessId.toString(),
+      if (branchId != null) 'branch_id': branchId.toString(),
+      'date_from': ?dateFrom,
+      'date_to': ?dateTo,
+    };
+    final uri = Uri.parse('$baseUrl/expenses.php').replace(queryParameters: params);
+    final res = await http.get(uri).timeout(const Duration(seconds: 15));
+    final body = _decode(res) as Map<String, dynamic>;
+    if (body['success'] == true) return body['expenses'] as List;
+    throw Exception(body['message'] ?? 'Imeshindwa kupata matumizi');
+  }
+
+  Future<Map<String, dynamic>> saveExpense({
+    required int businessId,
+    int? expenseId, // null = add
+    int? branchId,
+    int? userId,
+    required String category,
+    required String description,
+    required double amount,
+    required String expenseDate,
+    String? clientOpId,
+  }) async {
+    final res = await http
+        .post(
+          Uri.parse('$baseUrl/expenses.php'),
+          headers: _headers,
+          body: jsonEncode({
+            'action': expenseId == null ? 'add' : 'update',
+            'business_id': businessId,
+            'expense_id': ?expenseId,
+            'branch_id': ?branchId,
+            'user_id': ?userId,
+            'category': category,
+            'description': description,
+            'amount': amount,
+            'expense_date': expenseDate,
+            'client_op_id': ?clientOpId,
+          }),
+        )
+        .timeout(const Duration(seconds: 20));
+    return _decode(res) as Map<String, dynamic>;
+  }
+
+  Future<Map<String, dynamic>> deleteExpense({
+    required int businessId,
+    required int expenseId,
+    String? clientOpId,
+  }) async {
+    final res = await http
+        .post(
+          Uri.parse('$baseUrl/expenses.php'),
+          headers: _headers,
+          body: jsonEncode({
+            'action': 'delete',
+            'business_id': businessId,
+            'expense_id': expenseId,
+            'client_op_id': ?clientOpId,
+          }),
+        )
+        .timeout(const Duration(seconds: 20));
+    return _decode(res) as Map<String, dynamic>;
   }
 
   // ── Chart Data ────────────────────────────────────────
@@ -708,7 +998,7 @@ class ApiService {
     if (branchId != null) params['branch_id'] = branchId.toString();
     if (period != null) params['period'] = period;
     final uri = Uri.parse('$baseUrl/chart_data.php').replace(queryParameters: params);
-    final res = await http.get(uri).timeout(const Duration(seconds: 15));
-    return jsonDecode(res.body) as Map<String, dynamic>;
+    final res = await _client.get(uri).timeout(const Duration(seconds: 15));
+    return _decode(res) as Map<String, dynamic>;
   }
 }

@@ -8,6 +8,7 @@ import '../models/sale.dart';
 import '../providers/app_provider.dart';
 import '../theme/app_theme.dart';
 import '../l10n/app_l10n.dart';
+import 'sale_return_sheet.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Transaction Detail Bottom Sheet — items + payment history + actions
@@ -30,6 +31,7 @@ class _TransactionDetailSheetState extends State<TransactionDetailSheet>
     with TickerProviderStateMixin {
   List<Map<String, dynamic>> _items = [];
   List<SalePayment> _payments = [];
+  List<Map<String, dynamic>> _paymentBreakdown = [];
   bool _loadingItems = true;
   bool _loadingPayments = true;
   bool _processing = false;
@@ -114,6 +116,15 @@ class _TransactionDetailSheetState extends State<TransactionDetailSheet>
           _payments = raw
               .map((e) => SalePayment.fromJson(e as Map<String, dynamic>))
               .toList();
+        });
+      }
+    } catch (_) {}
+    try {
+      final raw = await app.api!.getSalePaymentBreakdown(widget.sale.saleId);
+      if (mounted) {
+        setState(() {
+          _paymentBreakdown =
+              raw.map((e) => Map<String, dynamic>.from(e as Map)).toList();
         });
       }
     } catch (_) {}
@@ -223,6 +234,75 @@ class _TransactionDetailSheetState extends State<TransactionDetailSheet>
     await Printing.layoutPdf(onLayout: (_) => doc.save());
   }
 
+  /// Hati ya Usafirishaji (Delivery Note, Hatua 6) — inathibitisha ni bidhaa
+  /// gani (idadi) zimesafirishwa/kupokelewa kwa mauzo haya. Bei hazionyeshwi
+  /// kwa makusudi (desturi ya kawaida ya delivery note — ni uthibitisho wa
+  /// kiasi, si hati ya malipo, tofauti na risiti).
+  Future<void> _printDeliveryNote() async {
+    final app = context.read<AppProvider>();
+    final biz = app.selectedBusiness;
+    final businessName = (biz?.receiptHeader.isNotEmpty ?? false)
+        ? biz!.receiptHeader
+        : (biz?.businessName ?? 'Duka Kiganjani');
+    final noteNo = 'DN-${_sale.saleNo.isNotEmpty ? _sale.saleNo : _sale.saleId}';
+
+    final doc = pw.Document();
+    doc.addPage(
+      pw.MultiPage(
+        pageFormat: PdfPageFormat.a4,
+        build: (ctx) => [
+          pw.Center(child: pw.Text(businessName.toUpperCase(), style: pw.TextStyle(fontSize: 16, fontWeight: pw.FontWeight.bold))),
+          pw.Center(child: pw.Text('HATI YA USAFIRISHAJI / DELIVERY NOTE', style: const pw.TextStyle(fontSize: 10))),
+          pw.SizedBox(height: 10),
+          _pdfRow('Namba', noteNo),
+          _pdfRow('Rejea ya Mauzo', _sale.saleNo.isNotEmpty ? _sale.saleNo : '#${_sale.saleId}'),
+          _pdfRow('Tarehe', _dateFmt.format(DateTime.tryParse(_sale.createdAt) ?? DateTime.now())),
+          _pdfRow('Mteja', _sale.customerName.isNotEmpty ? _sale.customerName : 'Mteja wa kawaida'),
+          if (_sale.customerPhone.isNotEmpty) _pdfRow('Simu', _sale.customerPhone),
+          pw.SizedBox(height: 12),
+          pw.Table(
+            border: pw.TableBorder.all(color: PdfColors.grey400, width: 0.5),
+            columnWidths: const {0: pw.FlexColumnWidth(3.5), 1: pw.FlexColumnWidth(1.5)},
+            children: [
+              pw.TableRow(decoration: const pw.BoxDecoration(color: PdfColors.grey200), children: [
+                _pdfCell('Bidhaa', bold: true), _pdfCell('Idadi', bold: true, align: pw.TextAlign.right),
+              ]),
+              for (final i in _items)
+                pw.TableRow(children: [
+                  _pdfCell('${i['product_name'] ?? '—'}'),
+                  _pdfCell(_qtyStr((i['quantity'] as num? ?? 0).toDouble()), align: pw.TextAlign.right),
+                ]),
+            ],
+          ),
+          pw.SizedBox(height: 40),
+          pw.Row(mainAxisAlignment: pw.MainAxisAlignment.spaceBetween, children: [
+            _signatureBlock('Amesafirishwa na'),
+            _signatureBlock('Amepokea'),
+          ]),
+        ],
+      ),
+    );
+    await Printing.layoutPdf(onLayout: (_) => doc.save());
+  }
+
+  String _qtyStr(double q) => q == q.roundToDouble() ? q.toInt().toString() : q.toStringAsFixed(1);
+
+  pw.Widget _pdfCell(String text, {bool bold = false, pw.TextAlign align = pw.TextAlign.left}) => pw.Padding(
+        padding: const pw.EdgeInsets.symmetric(horizontal: 5, vertical: 4),
+        child: pw.Text(text, textAlign: align, style: pw.TextStyle(fontSize: 9, fontWeight: bold ? pw.FontWeight.bold : pw.FontWeight.normal)),
+      );
+
+  pw.Widget _signatureBlock(String label) => pw.SizedBox(
+        width: 200,
+        child: pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.start, children: [
+          pw.Container(height: 1, color: PdfColors.grey600),
+          pw.SizedBox(height: 4),
+          pw.Text(label, style: const pw.TextStyle(fontSize: 9)),
+          pw.Text('Jina: ______________________', style: const pw.TextStyle(fontSize: 8)),
+          pw.Text('Tarehe: ____________________', style: const pw.TextStyle(fontSize: 8)),
+        ]),
+      );
+
   pw.Widget _pdfRow(String k, String v) => pw.Padding(
     padding: const pw.EdgeInsets.symmetric(vertical: 1),
     child: pw.Row(
@@ -278,7 +358,7 @@ class _TransactionDetailSheetState extends State<TransactionDetailSheet>
   }
 
   // ── Actions ──────────────────────────────────────────────────────────────
-  Future<void> _doAction(String action, {double? amount}) async {
+  Future<void> _doAction(String action, {double? amount, String? note}) async {
     final app = context.read<AppProvider>();
     if (app.api == null) return;
     setState(() => _processing = true);
@@ -287,10 +367,12 @@ class _TransactionDetailSheetState extends State<TransactionDetailSheet>
         _sale.saleId,
         action,
         amount: amount,
+        note: note,
       );
       if (!mounted) return;
       if (res['success'] == true) {
-        _snack(res['message'] as String? ?? '✅ Imefanikiwa', AppColors.accent);
+        _snack(res['message'] as String? ?? '✅ Imefanikiwa',
+            res['offline'] == true ? Colors.orange : AppColors.accent);
         Navigator.pop(context);
         widget.onActionDone();
       } else {
@@ -492,6 +574,7 @@ class _TransactionDetailSheetState extends State<TransactionDetailSheet>
     );
     // Read values BEFORE disposing controllers
     final amtText = amtCtrl.text;
+    final noteText = noteCtrl.text.trim();
     amtCtrl.dispose();
     noteCtrl.dispose();
     if (ok == true && mounted) {
@@ -500,12 +583,30 @@ class _TransactionDetailSheetState extends State<TransactionDetailSheet>
         _snack(l.enterPayAmt, Colors.orange);
         return;
       }
-      await _doAction('record_payment', amount: amt);
+      await _doAction('record_payment', amount: amt, note: noteText);
+    }
+  }
+
+  Future<void> _openReturnSheet() async {
+    final l = L.of(context);
+    if (context.read<AppProvider>().user?.canReturnSales != true) {
+      _snack(l.isSw ? 'Huna ruhusa ya kurudisha bidhaa' : 'You cannot process returns', Colors.redAccent);
+      return;
+    }
+    final done = await SaleReturnSheet.show(context, sale: _sale, items: _items);
+    if (done == true) {
+      await _loadAll();
+      widget.onActionDone();
     }
   }
 
   Future<void> _showVoidConfirm() async {
     final l = L.of(context);
+    // ── Role check (Hatua 1) ──
+    if (context.read<AppProvider>().user?.canVoidSales != true) {
+      _snack(l.isSw ? 'Huna ruhusa ya kuvunja mauzo' : 'You cannot void sales', Colors.redAccent);
+      return;
+    }
     final ok = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
@@ -637,6 +738,10 @@ class _TransactionDetailSheetState extends State<TransactionDetailSheet>
                             Icons.history_rounded,
                           ),
                           const SizedBox(height: 8),
+                          if (_paymentBreakdown.length > 1) ...[
+                            _paymentBreakdownChips(l),
+                            const SizedBox(height: 8),
+                          ],
                           _paymentHistoryCard(l),
                           const SizedBox(height: 14),
                         ],
@@ -766,12 +871,18 @@ class _TransactionDetailSheetState extends State<TransactionDetailSheet>
               ],
             ),
           ),
-          if (!_sale.isVoided && !_loadingItems)
+          if (!_sale.isVoided && !_loadingItems) ...[
             IconButton(
               onPressed: _printReceipt,
               tooltip: l.isSw ? 'Chapisha Risiti' : 'Print Receipt',
               icon: Icon(Icons.print_rounded, color: AppColors.primaryLt),
             ),
+            IconButton(
+              onPressed: _printDeliveryNote,
+              tooltip: l.isSw ? 'Chapisha Hati ya Usafirishaji' : 'Print Delivery Note',
+              icon: Icon(Icons.local_shipping_rounded, color: AppColors.primaryLt),
+            ),
+          ],
           IconButton(
             onPressed: () => Navigator.pop(context),
             icon: Icon(Icons.close_rounded, color: AppColors.textMuted),
@@ -988,6 +1099,34 @@ class _TransactionDetailSheetState extends State<TransactionDetailSheet>
           return _itemRow(e.value, e.key == _items.length - 1);
         }).toList(),
       ),
+    );
+  }
+
+  static const _breakdownLabels = {
+    'cash': 'Cash', 'mpesa': 'M-Pesa', 'bank': 'Benki', 'card': 'Kadi', 'other': 'Nyingine',
+  };
+
+  // ── Split-payment breakdown (Cash + M-Pesa + Bank) at checkout time ──────────
+  Widget _paymentBreakdownChips(L l) {
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: _paymentBreakdown.map((p) {
+        final method = '${p['method'] ?? 'other'}';
+        final amount = double.tryParse('${p['amount']}') ?? 0;
+        return Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color: AppColors.chartBlue.withAlpha(22),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: AppColors.chartBlue.withAlpha(70)),
+          ),
+          child: Text(
+            '${_breakdownLabels[method] ?? method}: TZS ${_fmt.format(amount)}',
+            style: TextStyle(color: AppColors.chartBlue, fontWeight: FontWeight.w700, fontSize: 12),
+          ),
+        );
+      }).toList(),
     );
   }
 
@@ -1275,14 +1414,30 @@ class _TransactionDetailSheetState extends State<TransactionDetailSheet>
       );
     }
 
-    btns.add(
-      _actionBtn(
-        label: l.voidSale,
-        icon: Icons.delete_outline_rounded,
-        color: Colors.redAccent,
-        onTap: _showVoidConfirm,
-      ),
-    );
+    // ── Marejesho (returns): ruhusiwa hata kwa cashier, tofauti na void ──
+    if (context.read<AppProvider>().user?.canReturnSales == true &&
+        !_sale.isVoided && _items.isNotEmpty) {
+      btns.add(
+        _actionBtn(
+          label: l.returnSale,
+          icon: Icons.assignment_return_outlined,
+          color: AppColors.chartBlue,
+          onTap: _openReturnSheet,
+        ),
+      );
+    }
+
+    // ── Role check (Hatua 1): Cashier hawezi kuvunja mauzo ──
+    if (context.read<AppProvider>().user?.canVoidSales == true) {
+      btns.add(
+        _actionBtn(
+          label: l.voidSale,
+          icon: Icons.delete_outline_rounded,
+          color: Colors.redAccent,
+          onTap: _showVoidConfirm,
+        ),
+      );
+    }
 
     return Wrap(spacing: 8, runSpacing: 8, children: btns);
   }
