@@ -1063,6 +1063,16 @@ class OfflineApiService extends ApiService {
   }
 
   @override
+  Future<Map<String, dynamic>> getAccountSummary(int businessId, {String? asOf}) {
+    final key = 'accountsummary:$businessId:${asOf ?? ''}';
+    return _cached(
+      key,
+      () => super.getAccountSummary(businessId, asOf: asOf),
+      decode: (raw) => {...Map<String, dynamic>.from(raw as Map), 'offline': true},
+    );
+  }
+
+  @override
   Future<Map<String, dynamic>> getSlowStock(int businessId,
       {int? branchId, int days = 60, int slowThresholdDays = 90}) {
     final key = 'slowstock:$businessId:${branchId ?? 0}:$days:$slowThresholdDays';

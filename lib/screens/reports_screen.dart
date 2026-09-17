@@ -27,7 +27,7 @@ enum _Range { today, week, month, lastMonth, quarter, year, custom }
 
 class _ReportsScreenState extends State<ReportsScreen>
     with SingleTickerProviderStateMixin {
-  late final TabController _tab = TabController(length: 5, vsync: this);
+  late final TabController _tab = TabController(length: 6, vsync: this);
   final _fmt = NumberFormat('#,###', 'en_US');
   final _fmtD = NumberFormat('#,##0.#', 'en_US');
 
@@ -38,6 +38,7 @@ class _ReportsScreenState extends State<ReportsScreen>
   Map<String, dynamic>? _report;
   Map<String, dynamic>? _cashflow;
   Map<String, dynamic>? _slowStock;
+  Map<String, dynamic>? _accountSummary;
   String _topProductsCategory = 'Zote';
   bool _loading = true;
   bool _offline = false;
@@ -110,16 +111,19 @@ class _ReportsScreenState extends State<ReportsScreen>
           dateTo: _toStr,
         ),
         app.api!.getSlowStock(biz.businessId, branchId: app.selectedBranch?.branchId),
+        app.api!.getAccountSummary(biz.businessId, asOf: _toStr),
       ]);
       if (!mounted) return;
       final r = results[0];
       final cf = results[1];
       final ss = results[2];
+      final acc = results[3];
       if (r['success'] == true) {
         setState(() {
           _report = r;
           _cashflow = cf['success'] == true ? cf : null;
           _slowStock = ss['success'] == true ? ss : null;
+          _accountSummary = acc['success'] == true ? acc : null;
           _offline = r['offline'] == true;
         });
       } else {
@@ -309,7 +313,7 @@ class _ReportsScreenState extends State<ReportsScreen>
                     ? _errorView()
                     : TabBarView(
                         controller: _tab,
-                        children: [_pnlTab(), _salesTab(), _expensesTab(), _cashflowTab(), _slowStockTab()],
+                        children: [_pnlTab(), _salesTab(), _expensesTab(), _cashflowTab(), _slowStockTab(), _accountSummaryTab()],
                       ),
           ),
         ],
@@ -504,6 +508,7 @@ class _ReportsScreenState extends State<ReportsScreen>
                       Tab(height: 40, text: 'Matumizi'),
                       Tab(height: 40, text: 'Mtiririko wa Pesa'),
                       Tab(height: 40, text: 'Bidhaa Zinazokaa'),
+                      Tab(height: 40, text: 'Muhtasari wa Akaunti'),
                     ],
                   ),
                 ),
@@ -1310,6 +1315,126 @@ class _ReportsScreenState extends State<ReportsScreen>
           Text('Stock: ${it['stock']} ${it['unit'] ?? ''}', style: TextStyle(color: AppColors.textMuted, fontSize: 10)),
         ]),
       ]),
+    );
+  }
+
+  // ── Account summary tab ("uhasibu rahisi" — Hatua 6) ────────────────────
+  static const _acctMethodLabels = {
+    'cash': 'Taslimu', 'mpesa': 'M-Pesa', 'mobile': 'Simu', 'bank': 'Benki',
+    'card': 'Kadi', 'credit': 'Mkopo', 'other': 'Nyingine',
+  };
+  String _acctMethodLabel(String m) => _acctMethodLabels[m.toLowerCase()] ?? m;
+
+  Widget _accountSummaryTab() {
+    final acc = _accountSummary;
+    final maxPad = MediaQuery.paddingOf(context).bottom;
+    if (acc == null) {
+      return RefreshIndicator(
+        onRefresh: _load,
+        color: AppColors.primary,
+        child: ListView(children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 60),
+            child: Column(children: [
+              Icon(Icons.account_balance_outlined, size: 48, color: AppColors.textMuted),
+              const SizedBox(height: 10),
+              Text('Muhtasari haupatikani kwa sasa', style: TextStyle(color: AppColors.textMuted)),
+            ]),
+          ),
+        ]),
+      );
+    }
+    final assets = _m(acc['assets']);
+    final liabilities = _m(acc['liabilities']);
+    final cashByMethod = _l(assets['cash_by_method']);
+    final cashTotal = _n(assets['cash_total']);
+    final receivable = _n(assets['receivable']);
+    final inventoryValue = _n(assets['inventory_value']);
+    final totalAssets = _n(assets['total']);
+    final totalLiabilities = _n(liabilities['total']);
+    final netWorth = _n(acc['net_worth']);
+    final opProfit = _n(acc['operating_profit_all_time']);
+
+    final left = <Widget>[
+          Container(
+            padding: const EdgeInsets.all(18),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: netWorth >= 0
+                    ? [AppColors.primaryDk, AppColors.primaryMid]
+                    : [const Color(0xFF7F1D1D), const Color(0xFFB91C1C)],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('THAMANI HALISI (MAKADIRIO)',
+                  style: const TextStyle(color: Colors.white70, fontSize: 11, fontWeight: FontWeight.w800, letterSpacing: 1)),
+              const SizedBox(height: 4),
+              Text(_money(netWorth.abs()),
+                  style: const TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.w900, letterSpacing: -0.5)),
+              const SizedBox(height: 4),
+              Text('Kama tarehe ${acc['as_of']}', style: const TextStyle(color: Colors.white70, fontSize: 11)),
+            ]),
+          ),
+          const SizedBox(height: 10),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(color: AppColors.chartBlue.withAlpha(20), borderRadius: BorderRadius.circular(10)),
+            child: Row(children: [
+              Icon(Icons.info_outline_rounded, size: 16, color: AppColors.chartBlue),
+              const SizedBox(width: 8),
+              Expanded(child: Text('Muhtasari huu ni makadirio yaliyohesabiwa kutoka mauzo/manunuzi/matumizi yaliyopo — si uhasibu rasmi wa double-entry.',
+                  style: TextStyle(color: AppColors.chartBlue, fontSize: 11))),
+            ]),
+          ),
+          const SizedBox(height: 14),
+          _card(
+            title: 'Mali (Assets)',
+            child: Column(children: [
+              for (final c in cashByMethod) _line(_acctMethodLabel('${c['method']}'), c['balance']),
+              _line('Jumla ya Fedha', cashTotal, strong: true),
+              Divider(color: AppColors.border, height: 18),
+              _line('Deni la Wateja (watakalolipa)', receivable),
+              _line('Thamani ya Stock', inventoryValue),
+              Divider(color: AppColors.border, height: 18),
+              _line('Jumla ya Mali', totalAssets, strong: true, color: AppColors.accent),
+            ]),
+          ),
+    ];
+    final right = <Widget>[
+          _card(
+            title: 'Madeni (Liabilities)',
+            child: Column(children: [
+              _line('Deni kwa Wasambazaji', totalLiabilities, strong: true, color: AppColors.chartOrange),
+            ]),
+          ),
+          const SizedBox(height: 14),
+          _card(
+            title: 'Thamani Halisi',
+            subtitle: 'Mali − Madeni',
+            child: Column(children: [
+              _line('Jumla ya Mali', totalAssets),
+              _line('− Jumla ya Madeni', totalLiabilities, negative: true),
+              Divider(color: AppColors.border, height: 18),
+              _line('= Thamani Halisi', netWorth, strong: true,
+                  color: netWorth >= 0 ? AppColors.accent : AppColors.chartRed),
+            ]),
+          ),
+          const SizedBox(height: 14),
+          _card(
+            title: 'Faida ya Uendeshaji (tangu mwanzo)',
+            subtitle: 'Mauzo − COGS − Matumizi, taarifa tu',
+            child: Column(children: [
+              _line('Faida', opProfit, strong: true, color: opProfit >= 0 ? AppColors.accent : AppColors.chartRed),
+            ]),
+          ),
+    ];
+    return RefreshIndicator(
+      onRefresh: _load,
+      color: AppColors.primary,
+      child: _columns(left, right, bottomPad: 100 + maxPad),
     );
   }
 

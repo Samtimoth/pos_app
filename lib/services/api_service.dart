@@ -872,6 +872,16 @@ class ApiService {
     return _decode(res) as Map<String, dynamic>;
   }
 
+  Future<Map<String, dynamic>> getAccountSummary(int businessId, {String? asOf}) async {
+    final params = {
+      'business_id': businessId.toString(),
+      'as_of': ?asOf,
+    };
+    final uri = Uri.parse('$baseUrl/account_summary.php').replace(queryParameters: params);
+    final res = await http.get(uri).timeout(const Duration(seconds: 30));
+    return _decode(res) as Map<String, dynamic>;
+  }
+
   Future<Map<String, dynamic>> getSlowStock(int businessId,
       {int? branchId, int days = 60, int slowThresholdDays = 90}) async {
     final params = {
