@@ -9,6 +9,8 @@ import '../models/sale.dart';
 import '../providers/app_provider.dart';
 import '../providers/cart_provider.dart';
 import '../services/app_update_service.dart';
+import '../services/crm_api.dart';
+import '../services/push_notification_service.dart';
 import '../services/sync_service.dart';
 import '../widgets/sync_status_bar.dart';
 import 'reports_screen.dart';
@@ -70,6 +72,22 @@ class _DashboardScreenState extends State<DashboardScreen>
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) AppUpdateService.checkAndPrompt(context);
     });
+    _initPushNotifications();
+  }
+
+  void _initPushNotifications() {
+    final app = context.read<AppProvider>();
+    final url = app.user?.serverUrl;
+    final userId = app.user?.userId;
+    if (url == null || userId == null) return;
+    PushNotificationService.init(
+      crm: CrmApi(url),
+      userId: userId,
+      businessId: app.selectedBusiness?.businessId,
+      onForegroundMessage: (message) {
+        if (mounted) PushNotificationService.showForegroundBanner(context, message);
+      },
+    );
   }
 
   void _onSynced() {

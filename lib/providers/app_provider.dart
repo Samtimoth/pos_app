@@ -1,8 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import '../models/user.dart';
 import '../models/business.dart';
 import '../services/api_service.dart';
+import '../services/crm_api.dart';
 import '../services/offline_api_service.dart';
+import '../services/push_notification_service.dart';
 import '../services/sync_service.dart';
 import '../services/storage_service.dart';
 import '../l10n/app_l10n.dart';
@@ -178,6 +182,12 @@ class AppProvider extends ChangeNotifier {
 
   // ── Logout ────────────────────────────────────────────
   Future<void> logout() async {
+    final serverUrl = _user?.serverUrl;
+    if (serverUrl != null) {
+      // Kifaa kisiendelee kupokea arifa za mtumiaji anayetoka — si ya
+      // lazima kwa logout kufanikiwa, hivyo haizuii chochote ikishindikana.
+      unawaited(PushNotificationService.unregister(CrmApi(serverUrl)));
+    }
     _user = null;
     _api = null;
     _selectedBusiness = null;

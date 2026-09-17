@@ -1,3 +1,5 @@
+import 'package:firebase_core/firebase_core.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'providers/app_provider.dart';
@@ -19,6 +21,15 @@ import 'widgets/brand_logo.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Push notifications (Hatua 6+): Android only for now — google-services.json
+  // is configured for Android; web/desktop have no Firebase config yet.
+  if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+    try {
+      await Firebase.initializeApp();
+    } catch (e) {
+      debugPrint('Firebase init failed (push notifications disabled): $e');
+    }
+  }
   await StorageService.init();
   // Offline-first: local SQLite cache + connectivity watcher.
   // Never let a storage problem stop the app – fall back to online-only.

@@ -289,6 +289,33 @@ class CrmApi {
       });
 
   // ═══════════════════════════════════════════════════════════════════════
+  // Push notifications (Firebase Cloud Messaging) — kusajili kifaa ili
+  // kipokee arifa (SuperAdmin matangazo, admin alerts) hata app ikiwa
+  // imefungwa. Online-only kwa makusudi (haihitaji kufanya kazi offline).
+  // ═══════════════════════════════════════════════════════════════════════
+  Future<void> registerDeviceToken({
+    required int userId,
+    int? businessId,
+    required String fcmToken,
+    String platform = 'android',
+  }) async {
+    try {
+      await _post('register_device_token.php', {
+        'user_id': userId, 'business_id': ?businessId,
+        'fcm_token': fcmToken, 'platform': platform,
+      });
+    } catch (_) {
+      // Si ya lazima kwa mtumiaji kuendelea kutumia app — jaribu tena baadaye.
+    }
+  }
+
+  Future<void> unregisterDeviceToken(String fcmToken) async {
+    try {
+      await _post('register_device_token.php', {'action': 'unregister', 'fcm_token': fcmToken});
+    } catch (_) {}
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
   // Zamu (Shift/Register, Hatua 4) — kufungua/kufunga zamu na fedha taslimu.
   // Kufunga kunahesabu "fedha inayotarajiwa" dhidi ya sale_payments/
   // tbl_expenses za wakati huo — hii ndiyo reconciliation ya Hatua 5.

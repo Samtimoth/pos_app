@@ -20,6 +20,12 @@ migrate_working_dir/
 *.so
 *.dll
 
+# Firebase — client config isn't a secret by itself, but keeping it out of
+# git like other per-environment credentials (.duka_ftp.env, backup_key.php)
+android/app/google-services.json
+ios/Runner/GoogleService-Info.plist
+**/firebase-service-account*.json
+
 # Custom Project Ignores
 .claude/
 .codex-tmp/
