@@ -8,6 +8,7 @@ import '../models/business.dart';
 import '../models/sale.dart';
 import '../providers/app_provider.dart';
 import '../providers/cart_provider.dart';
+import '../services/app_update_service.dart';
 import '../services/sync_service.dart';
 import '../widgets/sync_status_bar.dart';
 import 'reports_screen.dart';
@@ -66,6 +67,9 @@ class _DashboardScreenState extends State<DashboardScreen>
     // Reload once queued offline work reaches the server (temp ids → real).
     SyncService.instance.addChangeListener(_onSynced);
     SyncService.instance.syncNow();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) AppUpdateService.checkAndPrompt(context);
+    });
   }
 
   void _onSynced() {
