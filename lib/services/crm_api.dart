@@ -289,6 +289,58 @@ class CrmApi {
       });
 
   // ═══════════════════════════════════════════════════════════════════════
+  // Maombi ya Stock — mfanyakazi (cashier) anaomba, admin/meneja
+  // anaidhinisha, kisha aliyeomba anapokea ikiwasili (batch/FEFO inaongezwa
+  // — angalia stock_requests.php). Tofauti na Stock Transfers (kati ya
+  // matawi mawili yaliyopo) — hii ni ndani ya tawi moja: "tupatie zaidi".
+  // ═══════════════════════════════════════════════════════════════════════
+  Future<List<Map<String, dynamic>>> listStockRequests(int businessId, {int? branchId, String status = ''}) async {
+    final r = await _get('stock_requests.php', {
+      'action': 'list', 'business_id': '$businessId',
+      if (branchId != null) 'branch_id': '$branchId',
+      if (status.isNotEmpty) 'status': status,
+    });
+    return ((r['requests'] as List?) ?? []).map((e) => Map<String, dynamic>.from(e as Map)).toList();
+  }
+
+  Future<Map<String, dynamic>> createStockRequest({
+    required int businessId,
+    int? branchId,
+    required int productId,
+    required double requestedQty,
+    String note = '',
+  }) {
+    final opId = _uuid.v4();
+    return _post('stock_requests.php', {
+      'action': 'create', 'business_id': businessId,
+      'branch_id': ?branchId, 'product_id': productId,
+      'requested_qty': requestedQty, 'note': note, 'client_op_id': opId,
+    });
+  }
+
+  Future<Map<String, dynamic>> approveStockRequest(int businessId, int requestId, {String note = ''}) =>
+      _post('stock_requests.php', {
+        'action': 'approve', 'business_id': businessId, 'request_id': requestId, 'approve_note': note,
+      });
+
+  Future<Map<String, dynamic>> rejectStockRequest(int businessId, int requestId, {String note = ''}) =>
+      _post('stock_requests.php', {
+        'action': 'reject', 'business_id': businessId, 'request_id': requestId, 'approve_note': note,
+      });
+
+  Future<Map<String, dynamic>> receiveStockRequest({
+    required int businessId,
+    required int requestId,
+    required double receivedQty,
+    required double receivedBuyPrice,
+    String? receivedExpiryDate,
+  }) => _post('stock_requests.php', {
+        'action': 'receive', 'business_id': businessId, 'request_id': requestId,
+        'received_qty': receivedQty, 'received_buy_price': receivedBuyPrice,
+        'received_expiry_date': ?receivedExpiryDate,
+      });
+
+  // ═══════════════════════════════════════════════════════════════════════
   // Push notifications (Firebase Cloud Messaging) — kusajili kifaa ili
   // kipokee arifa (SuperAdmin matangazo, admin alerts) hata app ikiwa
   // imefungwa. Online-only kwa makusudi (haihitaji kufanya kazi offline).

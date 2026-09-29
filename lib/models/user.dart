@@ -68,6 +68,14 @@ class User {
   /// Meneja/mmiliki — hawahitaji PIN ya idhini (wao ndio wanaoidhinisha wengine)
   bool get isManagerTier => isSuperAdmin || _managerPlus.contains(_r);
 
+  /// Kuomba stock na kuipokea ikiwasili (angalia stock_requests.php)
+  bool get canRequestStock =>
+      isSuperAdmin || _managerPlus.contains(_r) || _r == 'stockist' || _r == 'cashier';
+
+  /// Kuidhinisha/kukataa maombi ya stock — si mtu aliyeomba mwenyewe
+  bool get canApproveStock =>
+      isSuperAdmin || _managerPlus.contains(_r) || _r == 'stockist';
+
   factory User.fromJson(Map<String, dynamic> json, String serverUrl) => User(
         userId:     int.parse((json['user_id'] ?? 0).toString()),
         username:   json['username']    as String? ?? '',

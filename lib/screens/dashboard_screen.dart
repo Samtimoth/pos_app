@@ -19,6 +19,7 @@ import 'expense_form_sheet.dart';
 import 'more_screen.dart';
 import 'profile_screen.dart';
 import 'stock_ledger_screen.dart';
+import 'stock_requests_screen.dart';
 import '../providers/theme_provider.dart';
 import '../theme/app_theme.dart';
 import '../l10n/app_l10n.dart';
@@ -47,6 +48,7 @@ class _DashboardScreenState extends State<DashboardScreen>
   String? _manageInitialTabKey;
   Map<String, dynamic> _stats = {};
   List<dynamic> _salesChart = [];
+  List<dynamic> _expensesChart = [];
   List<Sale> _recentSales = [];
   bool _loading = true;
   String? _error;
@@ -130,6 +132,7 @@ class _DashboardScreenState extends State<DashboardScreen>
         setState(() {
           _stats = data;
           _salesChart = (data['weekly_sales'] as List?) ?? [];
+          _expensesChart = (data['weekly_expenses'] as List?) ?? [];
           _recentSales = salesRes
               .take(5)
               .map((e) => Sale.fromJson(e as Map<String, dynamic>))
@@ -1082,8 +1085,19 @@ class _DashboardScreenState extends State<DashboardScreen>
         // ── KPI Cards ─────────────────────────────────────────────
         SliverToBoxAdapter(child: _buildMobileKpiRow(l)),
 
-        // ── Chart ─────────────────────────────────────────────────
+        // ── Charts: mauzo na matumizi ─────────────────────────────
         SliverToBoxAdapter(child: _buildMobileChart(l)),
+        SliverToBoxAdapter(
+          child: _buildMobileChart(
+            l,
+            title: l.isSw ? 'Matumizi ya Wiki' : 'Weekly Expenses',
+            data: _expensesChart,
+            icon: Icons.payments_rounded,
+            accentColor: AppColors.chartRed,
+            barColors: const [AppColors.chartRed, AppColors.chartOrange],
+            showLiveBadge: false,
+          ),
+        ),
 
         // ── Recent Sales ──────────────────────────────────────────
         SliverToBoxAdapter(child: _buildRecentSalesSection(l)),
@@ -1827,6 +1841,15 @@ class _DashboardScreenState extends State<DashboardScreen>
       onTap: () => setState(() => _nav = 6),
     ),
     MoreListItem(
+      icon: Icons.add_shopping_cart_outlined,
+      color: AppColors.chartGreen,
+      label: 'Maombi ya Stock',
+      subtitle: 'Omba stock, idhinisha, pokea ikiwasili',
+      onTap: () => Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => const StockRequestsScreen()),
+      ),
+    ),
+    MoreListItem(
       icon: Icons.payments_rounded,
       color: AppColors.chartRed,
       label: 'Ongeza Matumizi',
@@ -1867,6 +1890,10 @@ class _DashboardScreenState extends State<DashboardScreen>
         onTap: () => setState(() { _manageInitialTabKey = 'purchases'; _nav = 4; })),
     _KpiItem('Wateja', '', Icons.people_alt_rounded, AppColors.chartBlue,
         onTap: () => setState(() => _nav = 6)),
+    _KpiItem('Maombi ya Stock', '', Icons.add_shopping_cart_outlined, AppColors.chartGreen,
+        onTap: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const StockRequestsScreen()),
+            )),
     _KpiItem('Wafanyikazi', '', Icons.badge_rounded, AppColors.chartPurple,
         onTap: () => setState(() { _manageInitialTabKey = 'staff'; _nav = 4; })),
     _KpiItem('Matumizi', '', Icons.payments_rounded, AppColors.chartRed,
@@ -1984,7 +2011,16 @@ class _DashboardScreenState extends State<DashboardScreen>
   }
 
   // ── Mobile Chart ─────────────────────────────────────────────────
-  Widget _buildMobileChart(L l) {
+  Widget _buildMobileChart(
+    L l, {
+    String? title,
+    List<dynamic>? data,
+    IconData icon = Icons.bar_chart_rounded,
+    Color accentColor = AppColors.primaryLt,
+    List<Color> barColors = const [AppColors.primaryMid, AppColors.accentDk],
+    bool showLiveBadge = true,
+  }) {
+    final chartData = data ?? _salesChart;
     return Container(
       margin: const EdgeInsets.fromLTRB(16, 8, 16, 8),
       padding: const EdgeInsets.fromLTRB(16, 18, 10, 10),
@@ -2001,18 +2037,14 @@ class _DashboardScreenState extends State<DashboardScreen>
               Container(
                 padding: const EdgeInsets.all(7),
                 decoration: BoxDecoration(
-                  color: AppColors.primaryLt.withAlpha(22),
+                  color: accentColor.withAlpha(22),
                   borderRadius: BorderRadius.circular(10),
                 ),
-                child: const Icon(
-                  Icons.bar_chart_rounded,
-                  color: AppColors.primaryLt,
-                  size: 18,
-                ),
+                child: Icon(icon, color: accentColor, size: 18),
               ),
               const SizedBox(width: 10),
               Text(
-                l.weeklyChart,
+                title ?? l.weeklyChart,
                 style: TextStyle(
                   color: AppColors.textWhite,
                   fontSize: 14,
@@ -2020,46 +2052,47 @@ class _DashboardScreenState extends State<DashboardScreen>
                 ),
               ),
               const Spacer(),
-              PulseWidget(
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 4,
-                  ),
-                  decoration: BoxDecoration(
-                    color: AppColors.primaryLt.withAlpha(25),
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: Text(
-                    l.live,
-                    style: const TextStyle(
-                      color: AppColors.primaryLt,
-                      fontSize: 9,
-                      fontWeight: FontWeight.bold,
+              if (showLiveBadge)
+                PulseWidget(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: accentColor.withAlpha(25),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text(
+                      l.live,
+                      style: TextStyle(
+                        color: accentColor,
+                        fontSize: 9,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                   ),
                 ),
-              ),
             ],
           ),
           const SizedBox(height: 16),
           SizedBox(
             height: 150,
             child: _loading
-                ? const Center(
+                ? Center(
                     child: CircularProgressIndicator(
-                      color: AppColors.primaryLt,
+                      color: accentColor,
                       strokeWidth: 2,
                     ),
                   )
-                : _salesChart.isEmpty
+                : chartData.isEmpty
                 ? Center(
                     child: Text(
                       l.noData,
                       style: TextStyle(color: AppColors.textMuted),
                     ),
                   )
-                : BarChart(_buildBarChartData()),
+                : BarChart(_buildBarChartData(chartData, barColors)),
           ),
         ],
       ),
@@ -2288,6 +2321,16 @@ class _DashboardScreenState extends State<DashboardScreen>
               ),
             ),
             const SizedBox(height: 20),
+            _buildChartCard(
+              l,
+              height: 180,
+              title: l.isSw ? 'Matumizi ya Wiki' : 'Weekly Expenses',
+              data: _expensesChart,
+              icon: Icons.payments_rounded,
+              accentColor: AppColors.chartRed,
+              barColors: const [AppColors.chartRed, AppColors.chartOrange],
+            ),
+            const SizedBox(height: 20),
             _buildDesktopKpiRow(l),
             const SizedBox(height: 20),
             _buildDesktopMiniCards(l),
@@ -2489,7 +2532,16 @@ class _DashboardScreenState extends State<DashboardScreen>
     );
   }
 
-  Widget _buildChartCard(L l, {required double height}) {
+  Widget _buildChartCard(
+    L l, {
+    required double height,
+    String? title,
+    List<dynamic>? data,
+    IconData icon = Icons.bar_chart_rounded,
+    Color accentColor = AppColors.primaryLt,
+    List<Color> barColors = const [AppColors.primaryMid, AppColors.accentDk],
+  }) {
+    final chartData = data ?? _salesChart;
     return Container(
       padding: const EdgeInsets.fromLTRB(18, 18, 12, 10),
       decoration: BoxDecoration(
@@ -2505,18 +2557,14 @@ class _DashboardScreenState extends State<DashboardScreen>
               Container(
                 padding: const EdgeInsets.all(7),
                 decoration: BoxDecoration(
-                  color: AppColors.primaryLt.withAlpha(22),
+                  color: accentColor.withAlpha(22),
                   borderRadius: BorderRadius.circular(10),
                 ),
-                child: const Icon(
-                  Icons.bar_chart_rounded,
-                  color: AppColors.primaryLt,
-                  size: 18,
-                ),
+                child: Icon(icon, color: accentColor, size: 18),
               ),
               const SizedBox(width: 10),
               Text(
-                l.weeklyChart,
+                title ?? l.weeklyChart,
                 style: TextStyle(
                   color: AppColors.textWhite,
                   fontSize: 15,
@@ -2528,25 +2576,29 @@ class _DashboardScreenState extends State<DashboardScreen>
           const SizedBox(height: 18),
           SizedBox(
             height: height,
-            child: _salesChart.isEmpty
+            child: chartData.isEmpty
                 ? Center(
                     child: Text(
                       l.noData,
                       style: TextStyle(color: AppColors.textMuted),
                     ),
                   )
-                : BarChart(_buildBarChartData()),
+                : BarChart(_buildBarChartData(chartData, barColors)),
           ),
         ],
       ),
     );
   }
 
-  BarChartData _buildBarChartData() {
+  BarChartData _buildBarChartData([
+    List<dynamic>? source,
+    List<Color> gradientColors = const [AppColors.primaryMid, AppColors.accentDk],
+  ]) {
+    final data = source ?? _salesChart;
     final spots = <BarChartGroupData>[];
     double maxY = 0;
-    for (int i = 0; i < _salesChart.length && i < 7; i++) {
-      final v = (_salesChart[i]['total'] ?? 0.0).toDouble();
+    for (int i = 0; i < data.length && i < 7; i++) {
+      final v = (data[i]['total'] ?? 0.0).toDouble();
       if (v > maxY) maxY = v;
       spots.add(
         BarChartGroupData(
@@ -2554,8 +2606,8 @@ class _DashboardScreenState extends State<DashboardScreen>
           barRods: [
             BarChartRodData(
               toY: v,
-              gradient: const LinearGradient(
-                colors: [AppColors.primaryMid, AppColors.accentDk],
+              gradient: LinearGradient(
+                colors: gradientColors,
                 begin: Alignment.bottomCenter,
                 end: Alignment.topCenter,
               ),
@@ -2568,7 +2620,7 @@ class _DashboardScreenState extends State<DashboardScreen>
         ),
       );
     }
-    final labels = _salesChart
+    final labels = data
         .map((d) => (d['day_label'] as String?) ?? '')
         .toList();
     return BarChartData(
@@ -2910,6 +2962,16 @@ class _DashboardScreenState extends State<DashboardScreen>
           _buildMobileKpiRow(l),
           const SizedBox(height: 8),
           _buildMobileChart(l),
+          const SizedBox(height: 8),
+          _buildMobileChart(
+            l,
+            title: l.isSw ? 'Matumizi ya Wiki' : 'Weekly Expenses',
+            data: _expensesChart,
+            icon: Icons.payments_rounded,
+            accentColor: AppColors.chartRed,
+            barColors: const [AppColors.chartRed, AppColors.chartOrange],
+            showLiveBadge: false,
+          ),
           const SizedBox(height: 8),
           _buildRecentSalesSection(l),
         ],
