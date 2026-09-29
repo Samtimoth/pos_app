@@ -499,6 +499,56 @@ class ApiService {
     return _decode(res) as Map<String, dynamic>;
   }
 
+  // ── Return requests (mfanyakazi asiyeaminika kutosha ku-void mauzo) ──────
+  Future<List<Map<String, dynamic>>> listPendingReturnRequests(int businessId) async {
+    final res = await _client
+        .get(
+          Uri.parse('$baseUrl/sale_returns.php').replace(queryParameters: {
+            'action': 'list_pending', 'business_id': '$businessId',
+          }),
+          headers: _headers,
+        )
+        .timeout(const Duration(seconds: 20));
+    final d = _decode(res) as Map<String, dynamic>;
+    return ((d['requests'] as List?) ?? []).map((e) => Map<String, dynamic>.from(e as Map)).toList();
+  }
+
+  Future<Map<String, dynamic>> approveReturnRequest({
+    required int businessId,
+    required int requestId,
+    String note = '',
+  }) async {
+    final res = await _client
+        .post(
+          Uri.parse('$baseUrl/sale_returns.php'),
+          headers: _headers,
+          body: jsonEncode({
+            'action': 'approve_request', 'business_id': businessId,
+            'request_id': requestId, 'approve_note': note,
+          }),
+        )
+        .timeout(const Duration(seconds: 20));
+    return _decode(res) as Map<String, dynamic>;
+  }
+
+  Future<Map<String, dynamic>> rejectReturnRequest({
+    required int businessId,
+    required int requestId,
+    String note = '',
+  }) async {
+    final res = await _client
+        .post(
+          Uri.parse('$baseUrl/sale_returns.php'),
+          headers: _headers,
+          body: jsonEncode({
+            'action': 'reject_request', 'business_id': businessId,
+            'request_id': requestId, 'approve_note': note,
+          }),
+        )
+        .timeout(const Duration(seconds: 20));
+    return _decode(res) as Map<String, dynamic>;
+  }
+
   Future<List<dynamic>> getSaleReturns(int saleId) async {
     try {
       final uri = Uri.parse('$baseUrl/sale_returns.php')

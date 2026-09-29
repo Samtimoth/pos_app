@@ -20,6 +20,7 @@ import 'more_screen.dart';
 import 'profile_screen.dart';
 import 'stock_ledger_screen.dart';
 import 'stock_requests_screen.dart';
+import 'return_requests_screen.dart';
 import '../providers/theme_provider.dart';
 import '../theme/app_theme.dart';
 import '../l10n/app_l10n.dart';
@@ -1820,6 +1821,16 @@ class _DashboardScreenState extends State<DashboardScreen>
       subtitle: 'Kategoria, vipimo, wasambazaji, maagizo, nukuu',
       onTap: () => setState(() { _manageInitialTabKey = null; _nav = 4; }),
     ),
+    if (context.read<AppProvider>().user?.canVoidSales == true)
+      MoreListItem(
+        icon: Icons.assignment_return_rounded,
+        color: AppColors.chartOrange,
+        label: 'Maombi ya Kurudisha',
+        subtitle: 'Idhinisha marejesho ya bidhaa yaliyoombwa na wafanyikazi',
+        onTap: () => Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const ReturnRequestsScreen()),
+        ),
+      ),
     MoreListItem(
       icon: Icons.move_to_inbox_rounded,
       color: AppColors.chartOrange,

@@ -2707,6 +2707,7 @@ class _ScanToAddSheetState extends State<ScanToAddSheet>
       if (res['success'] == true) {
         setState(() => _added++);
         widget.onProductsAdded();
+        _snack('✅ ${_nameCtr.text.trim()} imeongezwa! (Jumla: $_added)', AppColors.accent);
         _resetScan();
       } else if (res['exists'] == true) {
         _snack(L.of(context).productExists, Colors.orange);

@@ -132,6 +132,14 @@ class _SaleReturnSheetState extends State<SaleReturnSheet> {
         reason: reason,
       );
       if (!mounted) return;
+      if (res['success'] == true && res['pending'] == true) {
+        // Mfanyakazi asiyeaminika kutosha ku-void mauzo — ombi limetumwa
+        // kwa admin, hakuna kilichobadilika bado (hakuna hati ya marejesho
+        // kwa sababu marejesho hayajafanyika kweli).
+        _snack('${res['message'] ?? 'Ombi limetumwa — linasubiri idhini'}', AppColors.chartOrange);
+        Navigator.pop(context, true);
+        return;
+      }
       if (res['success'] == true) {
         _snack('${res['message'] ?? 'Marejesho yamehifadhiwa'}', AppColors.accent);
         final returnedLines = <_CreditNoteLine>[];
