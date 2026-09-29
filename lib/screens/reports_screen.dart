@@ -604,6 +604,31 @@ class _ReportsScreenState extends State<ReportsScreen>
               ],
             ),
           ),
+          if ((sales['count'] ?? 0) == 0 && _range != _Range.year) ...[
+            const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: AppColors.chartOrange.withAlpha(20),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Row(children: [
+                Icon(Icons.info_outline_rounded, size: 16, color: AppColors.chartOrange),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Hakuna mauzo kwa "${_rangeLabel(_range)}" — mauzo yako yanaweza kuwa kwenye kipindi kingine.',
+                    style: TextStyle(color: AppColors.chartOrange, fontSize: 11.5),
+                  ),
+                ),
+                TextButton(
+                  onPressed: () => _setRange(_Range.year),
+                  style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: const Size(0, 0)),
+                  child: Text('Mwaka huu', style: TextStyle(color: AppColors.chartOrange, fontSize: 11.5, fontWeight: FontWeight.bold)),
+                ),
+              ]),
+            ),
+          ],
           const SizedBox(height: 14),
           // statement
           _card(
@@ -761,6 +786,31 @@ class _ReportsScreenState extends State<ReportsScreen>
             _kpi('Imepokelewa', _money(s['collected']),
                 'madeni ${_fmt.format(_n(s['outstanding']))}', AppColors.accent),
           ]),
+          if ((s['count'] ?? 0) == 0 && _range != _Range.year) ...[
+            const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: AppColors.chartOrange.withAlpha(20),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Row(children: [
+                Icon(Icons.info_outline_rounded, size: 16, color: AppColors.chartOrange),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Hakuna mauzo kwa "${_rangeLabel(_range)}" — mauzo yako yanaweza kuwa kwenye kipindi kingine.',
+                    style: TextStyle(color: AppColors.chartOrange, fontSize: 11.5),
+                  ),
+                ),
+                TextButton(
+                  onPressed: () => _setRange(_Range.year),
+                  style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: const Size(0, 0)),
+                  child: Text('Mwaka huu', style: TextStyle(color: AppColors.chartOrange, fontSize: 11.5, fontWeight: FontWeight.bold)),
+                ),
+              ]),
+            ),
+          ],
           const SizedBox(height: 10),
           Row(children: [
             _kpi('Bidhaa zilizouzwa', _fmtD.format(_n(s['units_sold'])), 'vipande', AppColors.chartBlue),
