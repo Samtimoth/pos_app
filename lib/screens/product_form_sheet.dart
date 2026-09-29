@@ -24,8 +24,15 @@ class AddProductSheet extends StatefulWidget {
   final VoidCallback onSaved;
   /// When non-null, the sheet opens in **edit** mode with fields pre-filled.
   final Product? initialProduct;
+  /// True when the caller only has `products.edit_basic` (e.g. cashier):
+  /// name/category/unit/barcode/description/image stay editable, price and
+  /// stock fields become read-only — update_product.php enforces this again
+  /// server-side regardless of what this UI sends.
+  final bool basicEditOnly;
 
-  const AddProductSheet({super.key, required this.onSaved, this.initialProduct});
+  const AddProductSheet({
+    super.key, required this.onSaved, this.initialProduct, this.basicEditOnly = false,
+  });
 
   bool get isEditMode => initialProduct != null;
 
@@ -321,7 +328,7 @@ class _AddProductSheetState extends State<AddProductSheet> {
             ? widget.initialProduct!.productId
             : (res['product_id'] as num?)?.toInt() ?? 0;
 
-        if (savedPid > 0 && app.api != null) {
+        if (savedPid > 0 && app.api != null && !widget.basicEditOnly) {
           final validUnits = _sellingUnits
               .where((u) => u.nameCtr.text.trim().isNotEmpty)
               .map((u) => {
@@ -525,55 +532,81 @@ class _AddProductSheetState extends State<AddProductSheet> {
                   ]),
                 ))),
 
-                // ── Pricing ───────────────────────────────────────────────
-                SliverToBoxAdapter(child: StaggeredItem(index: 2, child: _section(
-                  icon: Icons.payments_rounded,
-                  label: l.isSw ? 'Bei' : 'Pricing',
-                  child: Column(children: [
-                    Row(children: [
-                      Expanded(child: _field(ctrl: _buyPriceCtr, label: l.buyPrice,
-                          icon: Icons.arrow_downward_rounded,
-                          iconColor: AppColors.chartOrange,
-                          keyboardType: TextInputType.number)),
-                      const SizedBox(width: 12),
-                      Expanded(child: _field(ctrl: _sellPriceCtr, label: l.sellPrice,
-                          icon: Icons.arrow_upward_rounded,
-                          iconColor: AppColors.primaryLt,
-                          keyboardType: TextInputType.number,
-                          required: true,
-                          validator: (v) {
-                            if (v?.trim().isEmpty ?? true) return '${l.sellPrice} ${l.requiredField}';
-                            if ((double.tryParse(v!) ?? 0) <= 0) return '> 0';
-                            return null;
-                          })),
+                // ── Pricing (siyo kwa basicEditOnly — imefichwa kabisa, si
+                // tu imezimwa, kama alivyoomba mtumiaji) ──────────────────
+                if (!widget.basicEditOnly)
+                  SliverToBoxAdapter(child: StaggeredItem(index: 2, child: _section(
+                    icon: Icons.payments_rounded,
+                    label: l.isSw ? 'Bei' : 'Pricing',
+                    child: Column(children: [
+                      Row(children: [
+                        Expanded(child: _field(ctrl: _buyPriceCtr, label: l.buyPrice,
+                            icon: Icons.arrow_downward_rounded,
+                            iconColor: AppColors.chartOrange,
+                            keyboardType: TextInputType.number)),
+                        const SizedBox(width: 12),
+                        Expanded(child: _field(ctrl: _sellPriceCtr, label: l.sellPrice,
+                            icon: Icons.arrow_upward_rounded,
+                            iconColor: AppColors.primaryLt,
+                            keyboardType: TextInputType.number,
+                            required: true,
+                            validator: (v) {
+                              if (v?.trim().isEmpty ?? true) return '${l.sellPrice} ${l.requiredField}';
+                              if ((double.tryParse(v!) ?? 0) <= 0) return '> 0';
+                              return null;
+                            })),
+                      ]),
+                      const SizedBox(height: 12),
+                      _field(ctrl: _wholesaleCtr, label: l.wholesalePrice,
+                          icon: Icons.storefront_outlined,
+                          keyboardType: TextInputType.number),
+                      const SizedBox(height: 10),
+                      // Faida ya moja kwa moja — wanao ruhusa pekee (Hatua 1)
+                      if (context.read<AppProvider>().user?.canSeeCosts ?? false)
+                        _ProfitPreview(buyCtr: _buyPriceCtr, sellCtr: _sellPriceCtr),
                     ]),
-                    const SizedBox(height: 12),
-                    _field(ctrl: _wholesaleCtr, label: l.wholesalePrice,
-                        icon: Icons.storefront_outlined,
-                        keyboardType: TextInputType.number),
-                    const SizedBox(height: 10),
-                    // Faida ya moja kwa moja — wanao ruhusa pekee (Hatua 1)
-                    if (context.read<AppProvider>().user?.canSeeCosts ?? false)
-                      _ProfitPreview(buyCtr: _buyPriceCtr, sellCtr: _sellPriceCtr),
-                  ]),
-                ))),
+                  ))),
 
-                // ── Stock ─────────────────────────────────────────────────
-                SliverToBoxAdapter(child: StaggeredItem(index: 3, child: _section(
-                  icon: Icons.layers_rounded,
-                  label: l.isSw ? 'Hifadhi (Stock)' : 'Stock',
-                  child: Row(children: [
-                    Expanded(child: _field(ctrl: _stockCtr, label: l.stock,
-                        icon: Icons.inventory_rounded, iconColor: AppColors.accent,
-                        keyboardType: TextInputType.number, required: true,
-                        validator: (v) => int.tryParse(v ?? '') == null ? '≥ 0' : null)),
-                    const SizedBox(width: 12),
-                    Expanded(child: _field(ctrl: _minStockCtr, label: l.minStock,
-                        icon: Icons.warning_amber_rounded, iconColor: AppColors.chartOrange,
-                        keyboardType: TextInputType.number, required: true,
-                        validator: (v) => int.tryParse(v ?? '') == null ? '≥ 0' : null)),
-                  ]),
-                ))),
+                // ── Stock (siyo kwa basicEditOnly) ──────────────────────
+                if (!widget.basicEditOnly)
+                  SliverToBoxAdapter(child: StaggeredItem(index: 3, child: _section(
+                    icon: Icons.layers_rounded,
+                    label: l.isSw ? 'Hifadhi (Stock)' : 'Stock',
+                    child: Row(children: [
+                      Expanded(child: _field(ctrl: _stockCtr, label: l.stock,
+                          icon: Icons.inventory_rounded, iconColor: AppColors.accent,
+                          keyboardType: TextInputType.number, required: true,
+                          validator: (v) => int.tryParse(v ?? '') == null ? '≥ 0' : null)),
+                      const SizedBox(width: 12),
+                      Expanded(child: _field(ctrl: _minStockCtr, label: l.minStock,
+                          icon: Icons.warning_amber_rounded, iconColor: AppColors.chartOrange,
+                          keyboardType: TextInputType.number, required: true,
+                          validator: (v) => int.tryParse(v ?? '') == null ? '≥ 0' : null)),
+                    ]),
+                  ))),
+                if (widget.basicEditOnly)
+                  SliverToBoxAdapter(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 20),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                        decoration: BoxDecoration(
+                          color: AppColors.chartBlue.withAlpha(20),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Row(children: [
+                          Icon(Icons.info_outline_rounded, size: 16, color: AppColors.chartBlue),
+                          const SizedBox(width: 8),
+                          Expanded(child: Text(
+                            l.isSw
+                                ? 'Bei na stock hazibadilishwi hapa — muulize meneja/mmiliki.'
+                                : 'Price and stock cannot be changed here — ask your manager/owner.',
+                            style: TextStyle(color: AppColors.chartBlue, fontSize: 11),
+                          )),
+                        ]),
+                      ),
+                    ),
+                  ),
 
                 // ── Description ───────────────────────────────────────────
                 SliverToBoxAdapter(child: StaggeredItem(index: 4, child: _section(
@@ -583,8 +616,9 @@ class _AddProductSheetState extends State<AddProductSheet> {
                       icon: Icons.edit_note_rounded, maxLines: 3),
                 ))),
 
-                // ── Selling Units ─────────────────────────────────────────
-                SliverToBoxAdapter(child: StaggeredItem(index: 5, child: _unitsSection(l))),
+                // ── Selling Units (bei za unit — siyo kwa basicEditOnly) ──
+                if (!widget.basicEditOnly)
+                  SliverToBoxAdapter(child: StaggeredItem(index: 5, child: _unitsSection(l))),
 
                 // ── Save button ───────────────────────────────────────────
                 SliverToBoxAdapter(child: StaggeredItem(index: 6, child: Padding(

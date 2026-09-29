@@ -76,6 +76,11 @@ class User {
   bool get canApproveStock =>
       isSuperAdmin || _managerPlus.contains(_r) || _r == 'stockist';
 
+  /// Kuhariri maelezo ya bidhaa tu (jina/picha/kategoria) — si bei wala stock
+  /// (angalia canManageProducts kwa uhariri kamili, update_product.php
+  /// inalazimisha hili tena upande wa server bila kujali UI)
+  bool get canEditProductBasic => _r == 'cashier';
+
   factory User.fromJson(Map<String, dynamic> json, String serverUrl) => User(
         userId:     int.parse((json['user_id'] ?? 0).toString()),
         username:   json['username']    as String? ?? '',

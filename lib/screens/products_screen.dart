@@ -136,7 +136,10 @@ class _ProductsScreenState extends State<ProductsScreen>
 
   void _openEditProduct(Product product) {
     // ── Role check (Hatua 1) ──
-    if (context.read<AppProvider>().user?.canManageProducts != true) {
+    final user = context.read<AppProvider>().user;
+    final fullEdit = user?.canManageProducts == true;
+    final basicEdit = user?.canEditProductBasic == true;
+    if (!fullEdit && !basicEdit) {
       AppNotification.show(context,
           L.of(context).isSw ? 'Huna ruhusa ya kuhariri bidhaa' : 'You cannot edit products',
           AppColors.chartRed);
@@ -146,7 +149,9 @@ class _ProductsScreenState extends State<ProductsScreen>
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (_) => AddProductSheet(initialProduct: product, onSaved: _load),
+      builder: (_) => AddProductSheet(
+        initialProduct: product, onSaved: _load, basicEditOnly: !fullEdit,
+      ),
     );
   }
 
@@ -983,7 +988,7 @@ class _ProductsScreenState extends State<ProductsScreen>
               ),
               item(Icons.visibility_rounded, l.isSw ? 'Tazama maelezo' : 'View details',
                   AppColors.primaryLt, () => _openDetailProduct(p)),
-              if (user?.canManageProducts == true)
+              if (user?.canManageProducts == true || user?.canEditProductBasic == true)
                 item(Icons.edit_rounded, l.isSw ? 'Hariri bidhaa' : 'Edit product',
                     AppColors.chartPurple, () => _openEditProduct(p)),
               if (user?.canManageProducts == true)

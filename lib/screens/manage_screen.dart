@@ -2087,6 +2087,46 @@ class _StaffFormSheetState extends State<_StaffFormSheet> {
           icon: Icons.check_circle_rounded,
         );
         Navigator.pop(context, true);
+      } else if (res['reason'] == 'inactive_here' && res['user_id'] != null) {
+        // Mfanyakazi huyu tayari yupo kwenye duka hili lakini ameondolewa —
+        // mpe njia ya haraka ya kumrejesha badala ya ujumbe wa kufeli tu.
+        final reactivate = await showDialog<bool>(
+          context: context,
+          builder: (_) => AlertDialog(
+            backgroundColor: AppColors.bgCard,
+            title: Text('Mfanyakazi tayari yupo', style: TextStyle(color: AppColors.textWhite, fontSize: 16)),
+            content: Text(
+              res['message'] as String? ?? '',
+              style: TextStyle(color: AppColors.textMuted),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: Text('Ghairi', style: TextStyle(color: AppColors.textMuted)),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('Mrejeshe'),
+              ),
+            ],
+          ),
+        );
+        if (reactivate == true && mounted) {
+          final r2 = await app.api!.manageStaff(
+            businessId: widget.business.businessId,
+            action: 'reactivate',
+            requesterUserId: user.userId,
+            userId: res['user_id'] as int,
+          );
+          if (!mounted) return;
+          AppNotification.show(
+            context,
+            r2['message'] as String? ?? (r2['success'] == true ? '✅ Imefanikiwa' : 'Hitilafu'),
+            r2['success'] == true ? AppColors.accent : AppColors.chartRed,
+            icon: r2['success'] == true ? Icons.check_circle_rounded : Icons.error_rounded,
+          );
+          if (r2['success'] == true) Navigator.pop(context, true);
+        }
       } else {
         AppNotification.show(
           context,
