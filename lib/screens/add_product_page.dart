@@ -1771,8 +1771,41 @@ class _ExcelTabState extends State<_ExcelTab> {
 
       setState(() { _rows = rows; _step = 1; _parsing = false; });
     } catch (e) {
-      if (mounted) { _snack('$e', Colors.redAccent); setState(() => _parsing = false); }
+      if (!mounted) return;
+      setState(() => _parsing = false);
+      final msg = '$e';
+      if (msg.contains('Damaged Excel file') || msg.contains('styles')) {
+        _showUnreadableFileDialog();
+      } else {
+        _snack(msg, Colors.redAccent);
+      }
     }
+  }
+
+  void _showUnreadableFileDialog() {
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: AppColors.bgCard,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        icon: const Icon(Icons.warning_amber_rounded, color: Colors.orangeAccent, size: 32),
+        title: Text('Faili haisomeki', style: TextStyle(color: AppColors.textWhite, fontSize: 16)),
+        content: Text(
+          'Faili hili la Excel lina muundo ambao mfumo wetu hauwezi kusoma vizuri '
+          '(mara nyingi hutokea kwa faili zilizotoka programu fulani za zamani au za '
+          'kigeni).\n\nJaribu mojawapo:\n'
+          '1. Fungua faili kwenye Google Sheets, kisha "File > Download > Microsoft Excel (.xlsx)" upya, kisha jaribu tena.\n'
+          '2. Au hifadhi (Save As) faili kama CSV badala ya Excel, kisha pakia hiyo CSV hapa.',
+          style: TextStyle(color: AppColors.textMuted, fontSize: 13, height: 1.5),
+        ),
+        actions: [
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Nimeelewa'),
+          ),
+        ],
+      ),
+    );
   }
 
   List<_ExRow> _parseXlsx(Uint8List bytes) {
