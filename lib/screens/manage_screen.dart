@@ -170,18 +170,11 @@ class _ManageScreenState extends State<ManageScreen>
     );
     final tabBar = buildTabBar(onGradient: false);
 
-    final themePanel = _ThemePanel();
-
     if (widget.desktop) {
       return Column(
         children: [
           Container(
-            padding: const EdgeInsets.fromLTRB(24, 18, 24, 8),
-            color: Colors.transparent,
-            child: themePanel,
-          ),
-          Container(
-            padding: const EdgeInsets.fromLTRB(24, 0, 24, 14),
+            padding: const EdgeInsets.fromLTRB(24, 18, 24, 14),
             color: Colors.transparent,
             child: tabBar,
           ),
@@ -252,14 +245,18 @@ class _ManageScreenState extends State<ManageScreen>
                               )
                             else
                               const SizedBox(width: 12),
-                            Text(
-                              l.manage,
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 20,
-                                fontWeight: FontWeight.w800,
+                            Expanded(
+                              child: Text(
+                                l.manage,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 20,
+                                  fontWeight: FontWeight.w800,
+                                ),
                               ),
                             ),
+                            const _CompactThemeButton(),
+                            const SizedBox(width: 4),
                           ],
                         ),
                       ),
@@ -272,10 +269,6 @@ class _ManageScreenState extends State<ManageScreen>
                   ),
                 ),
               ),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 14, 16, 2),
-              child: themePanel,
             ),
             Expanded(
               child: TabBarView(
@@ -309,175 +302,95 @@ class _ManageScreenState extends State<ManageScreen>
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Theme Panel — Mandhari / Appearance settings card
+// Compact theme toggle for Manage's mobile header — desktop already has the
+// global theme pill in its persistent top bar (angalia dashboard_screen.dart's
+// _ThemeToggleButton), hivyo hapa hatuhitaji zaidi ya kitufe kimoja kidogo:
+// tap inazungusha auto→usiku→mchana, long-press inafungua chaguo la moja kwa moja.
 // ─────────────────────────────────────────────────────────────────────────────
-class _ThemePanel extends StatelessWidget {
-  const _ThemePanel();
+class _CompactThemeButton extends StatelessWidget {
+  const _CompactThemeButton();
+
+  static const _order = ['auto', 'dark', 'light'];
+
+  void _cycle(BuildContext context) {
+    final tp = context.read<ThemeProvider>();
+    final next = _order[(_order.indexOf(tp.preference) + 1) % _order.length];
+    tp.setPreference(next);
+  }
+
+  void _showPicker(BuildContext context) {
+    final tp = context.read<ThemeProvider>();
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (_) => ChangeNotifierProvider.value(
+        value: tp,
+        child: const _ThemePickerSheet(),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     final theme = context.watch<ThemeProvider>();
     final isDark = theme.isDark;
-
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 300),
-      padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-      decoration: BoxDecoration(
-        color: AppColors.bgCard,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.border),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withAlpha(isDark ? 40 : 15),
-            blurRadius: 12,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(children: [
-          // Animated icon
-          AnimatedSwitcher(
-            duration: const Duration(milliseconds: 350),
-            transitionBuilder: (child, anim) => ScaleTransition(
-              scale: CurvedAnimation(parent: anim, curve: Curves.elasticOut),
-              child: FadeTransition(opacity: anim, child: child),
-            ),
-            child: Container(
-              key: ValueKey(isDark),
-              padding: const EdgeInsets.all(9),
-              decoration: BoxDecoration(
-                color: isDark
-                    ? AppColors.primary.withAlpha(45)
-                    : AppColors.accentDk.withAlpha(25),
-                borderRadius: BorderRadius.circular(11),
-              ),
-              child: Icon(
-                isDark ? Icons.dark_mode_rounded : Icons.light_mode_rounded,
-                color: isDark ? AppColors.primaryLt : AppColors.accentDk,
-                size: 20,
-              ),
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Mandhari',
-                  style: TextStyle(
-                    color: AppColors.textWhite,
-                    fontWeight: FontWeight.w700,
-                    fontSize: 13,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 250),
-                  child: Text(
-                    key: ValueKey(theme.preference + (isDark ? 'd' : 'l')),
-                    theme.preference == 'auto'
-                        ? (isDark
-                              ? 'Kiotomatiki • Usiku sasa'
-                              : 'Kiotomatiki • Mchana sasa')
-                        : theme.preference == 'dark'
-                        ? 'Usiku daima'
-                        : 'Mchana daima',
-                    style: TextStyle(color: AppColors.textMuted, fontSize: 11),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          ]),
-          const SizedBox(height: 10),
-          // 3 option chips – full width row
-          Row(
-            children: [
-              Expanded(child: _ThemeChip(
-                pref: 'auto',
-                icon: Icons.schedule_rounded,
-                label: 'Auto',
-              )),
-              const SizedBox(width: 6),
-              Expanded(child: _ThemeChip(
-                pref: 'dark',
-                icon: Icons.dark_mode_rounded,
-                label: 'Usiku',
-              )),
-              const SizedBox(width: 6),
-              Expanded(child: _ThemeChip(
-                pref: 'light',
-                icon: Icons.light_mode_rounded,
-                label: 'Mchana',
-              )),
-            ],
-          ),
-        ],
-      ),
+    final icon = switch (theme.preference) {
+      'dark' => Icons.dark_mode_rounded,
+      'light' => Icons.light_mode_rounded,
+      _ => isDark ? Icons.nights_stay_rounded : Icons.wb_sunny_rounded,
+    };
+    return IconButton(
+      onPressed: () => _cycle(context),
+      onLongPress: () => _showPicker(context),
+      icon: Icon(icon, color: Colors.white, size: 20),
+      tooltip: 'Mandhari',
     );
   }
 }
 
-class _ThemeChip extends StatelessWidget {
-  final String pref;
-  final IconData icon;
-  final String label;
-  const _ThemeChip({
-    required this.pref,
-    required this.icon,
-    required this.label,
-  });
+class _ThemePickerSheet extends StatelessWidget {
+  const _ThemePickerSheet();
 
   @override
   Widget build(BuildContext context) {
     final theme = context.watch<ThemeProvider>();
-    final isActive = theme.preference == pref;
+    Widget option(String pref, IconData icon, String label) {
+      final isActive = theme.preference == pref;
+      return ListTile(
+        leading: Icon(icon, color: isActive ? AppColors.primaryLt : AppColors.textMuted),
+        title: Text(label, style: TextStyle(color: AppColors.textWhite)),
+        trailing: isActive ? Icon(Icons.check_rounded, color: AppColors.primaryLt) : null,
+        onTap: () {
+          context.read<ThemeProvider>().setPreference(pref);
+          Navigator.pop(context);
+        },
+      );
+    }
 
-    return GestureDetector(
-      onTap: () => context.read<ThemeProvider>().setPreference(pref),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 220),
-        curve: Curves.easeOutCubic,
-        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
+    return SafeArea(
+      child: Container(
         decoration: BoxDecoration(
-          color: isActive ? AppColors.primary.withAlpha(210) : AppColors.bg,
-          borderRadius: BorderRadius.circular(9),
-          border: Border.all(
-            color: isActive ? AppColors.primaryLt : AppColors.border,
-            width: isActive ? 1.4 : 1.0,
-          ),
-          boxShadow: isActive
-              ? [
-                  BoxShadow(
-                    color: AppColors.primary.withAlpha(80),
-                    blurRadius: 8,
-                    offset: const Offset(0, 3),
-                  ),
-                ]
-              : [],
+          color: AppColors.bgCard,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
         ),
-        child: Row(
+        child: Column(
           mainAxisSize: MainAxisSize.min,
-          mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(
-              icon,
-              size: 13,
-              color: isActive ? Colors.white : AppColors.textMuted,
-            ),
-            const SizedBox(width: 4),
-            Text(
-              label,
-              style: TextStyle(
-                color: isActive ? Colors.white : AppColors.textMuted,
-                fontSize: 10,
-                fontWeight: isActive ? FontWeight.bold : FontWeight.normal,
+            const SizedBox(height: 10),
+            Container(width: 40, height: 4, decoration: BoxDecoration(
+                color: AppColors.border, borderRadius: BorderRadius.circular(2))),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 14, 20, 6),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text('Mandhari', style: TextStyle(
+                    color: AppColors.textWhite, fontSize: 16, fontWeight: FontWeight.w800)),
               ),
             ),
+            option('auto', Icons.schedule_rounded, 'Kiotomatiki'),
+            option('dark', Icons.dark_mode_rounded, 'Usiku daima'),
+            option('light', Icons.light_mode_rounded, 'Mchana daima'),
+            const SizedBox(height: 8),
           ],
         ),
       ),
