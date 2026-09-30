@@ -167,6 +167,13 @@ class _ProductsScreenState extends State<ProductsScreen>
   }
 
   void _openExcelImport() {
+    // ── Role check (Hatua 1) ──
+    if (context.read<AppProvider>().user?.canManageProducts != true) {
+      AppNotification.show(context,
+          L.of(context).isSw ? 'Huna ruhusa ya kuagiza bidhaa' : 'You cannot import products',
+          AppColors.chartRed);
+      return;
+    }
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -790,7 +797,8 @@ class _ProductsScreenState extends State<ProductsScreen>
                                 ),
                         ),
                 ),
-                if (widget.showMobileFab)
+                if (widget.showMobileFab &&
+                    context.read<AppProvider>().user?.canManageProducts == true)
                   Positioned(
                     right: 16,
                     bottom: fabBottom,
@@ -1132,53 +1140,55 @@ class _ProductsScreenState extends State<ProductsScreen>
                 ),
               ),
             ),
-            const SizedBox(width: 8),
-            OutlinedButton.icon(
-              onPressed: _openExcelImport,
-              style: OutlinedButton.styleFrom(
-                foregroundColor: AppColors.primaryLt,
-                side: BorderSide(color: AppColors.border),
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 14,
-                  vertical: 12,
+            if (context.read<AppProvider>().user?.canManageProducts == true) ...[
+              const SizedBox(width: 8),
+              OutlinedButton.icon(
+                onPressed: _openExcelImport,
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: AppColors.primaryLt,
+                  side: BorderSide(color: AppColors.border),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 12,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
                 ),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(10),
-                ),
-              ),
-              icon: const Icon(Icons.table_chart_rounded, size: 16),
-              label: Text(
-                l.importExcel,
-                style: const TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
-            const SizedBox(width: 8),
-            ElevatedButton.icon(
-              onPressed: _openAddProduct,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.accent,
-                foregroundColor: AppColors.bgDark,
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 12,
-                ),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                elevation: 0,
-              ),
-              icon: const Icon(Icons.add_rounded, size: 18),
-              label: Text(
-                l.addProductTitle,
-                style: const TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.bold,
+                icon: const Icon(Icons.table_chart_rounded, size: 16),
+                label: Text(
+                  l.importExcel,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
               ),
-            ),
+              const SizedBox(width: 8),
+              ElevatedButton.icon(
+                onPressed: _openAddProduct,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.accent,
+                  foregroundColor: AppColors.bgDark,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 12,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  elevation: 0,
+                ),
+                icon: const Icon(Icons.add_rounded, size: 18),
+                label: Text(
+                  l.addProductTitle,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ],
           ],
         ],
       ),
@@ -1835,7 +1845,11 @@ class _ProductTableRowState extends State<_ProductTableRow> {
   Widget build(BuildContext context) {
     final p = widget.product;
     final catColor = CatStyle.color(p.category);
-    final canSeeCosts = context.read<AppProvider>().user?.canSeeCosts ?? false;
+    final user = context.read<AppProvider>().user;
+    final canSeeCosts = user?.canSeeCosts ?? false;
+    final canEdit = user?.canManageProducts == true || user?.canEditProductBasic == true;
+    final canBatch = user?.canManageProducts == true;
+    final canDelete = user?.canDeleteProducts == true;
     final profit = p.sellPrice - p.buyPrice;
     final out = p.stock <= 0;
     Widget cell(String t, {int flex = 2, TextAlign align = TextAlign.left, Color? color, bool bold = false}) =>
@@ -1928,9 +1942,12 @@ class _ProductTableRowState extends State<_ProductTableRow> {
                   mainAxisAlignment: MainAxisAlignment.end,
                   children: [
                     act(Icons.visibility_rounded, AppColors.textMuted, 'Angalia', widget.onView),
-                    act(Icons.edit_rounded, AppColors.primaryLt, 'Hariri', widget.onEdit),
-                    act(Icons.add_box_rounded, AppColors.accent, 'Ongeza stock', widget.onBatch),
-                    act(Icons.delete_outline_rounded, AppColors.chartRed, 'Futa', widget.onDelete),
+                    if (canEdit)
+                      act(Icons.edit_rounded, AppColors.primaryLt, 'Hariri', widget.onEdit),
+                    if (canBatch)
+                      act(Icons.add_box_rounded, AppColors.accent, 'Ongeza stock', widget.onBatch),
+                    if (canDelete)
+                      act(Icons.delete_outline_rounded, AppColors.chartRed, 'Futa', widget.onDelete),
                   ],
                 ),
               ),

@@ -48,6 +48,10 @@ class User {
   bool get canManageExpenses =>
       isSuperAdmin || _managerPlus.contains(_r) || _r == 'accountant';
 
+  /// Kuandika matumizi mapya (expenses.add) — cashier anaruhusiwa kuandika
+  /// ingawa hawezi kuhariri/kufuta (angalia canManageExpenses)
+  bool get canAddExpense => canManageExpenses || _r == 'cashier';
+
   /// Kusimamia wafanyakazi
   bool get canManageStaff => isSuperAdmin || _r == 'owner' || _r == 'admin';
 

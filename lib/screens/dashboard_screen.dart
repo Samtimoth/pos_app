@@ -1943,15 +1943,18 @@ class _DashboardScreenState extends State<DashboardScreen>
 
   // "Zaidi" (More) page contents — kila kitu kisichokaa moja kwa moja
   // kwenye bottom nav ya simu (nafasi ni ya Dashibodi/Bidhaa/POS/Mauzo tu).
-  List<MoreListItem> _moreItems(L l) => [
-    MoreListItem(
-      icon: Icons.tune_rounded,
-      color: AppColors.primaryLt,
-      label: 'Simamia',
-      subtitle: 'Kategoria, vipimo, wasambazaji, maagizo, nukuu',
-      onTap: () => setState(() { _manageInitialTabKey = null; _nav = 4; }),
-    ),
-    if (context.read<AppProvider>().user?.canVoidSales == true)
+  List<MoreListItem> _moreItems(L l) {
+    final user = context.read<AppProvider>().user;
+    return [
+    if (user?.canManageProducts == true || user?.canManageStaff == true)
+      MoreListItem(
+        icon: Icons.tune_rounded,
+        color: AppColors.primaryLt,
+        label: 'Simamia',
+        subtitle: 'Kategoria, vipimo, wasambazaji, maagizo, nukuu',
+        onTap: () => setState(() { _manageInitialTabKey = null; _nav = 4; }),
+      ),
+    if (user?.canVoidSales == true)
       MoreListItem(
         icon: Icons.assignment_return_rounded,
         color: AppColors.chartOrange,
@@ -1961,42 +1964,46 @@ class _DashboardScreenState extends State<DashboardScreen>
           MaterialPageRoute(builder: (_) => const ReturnRequestsScreen()),
         ),
       ),
-    MoreListItem(
-      icon: Icons.move_to_inbox_rounded,
-      color: AppColors.chartOrange,
-      label: 'Manunuzi',
-      subtitle: 'Ununuzi wa stock kutoka kwa wasambazaji',
-      onTap: () => setState(() { _manageInitialTabKey = 'purchases'; _nav = 4; }),
-    ),
-    MoreListItem(
-      icon: Icons.badge_rounded,
-      color: AppColors.chartPurple,
-      label: 'Wafanyikazi',
-      subtitle: 'Watumiaji na ruhusa zao',
-      onTap: () => setState(() { _manageInitialTabKey = 'staff'; _nav = 4; }),
-    ),
+    if (user?.canManageProducts == true)
+      MoreListItem(
+        icon: Icons.move_to_inbox_rounded,
+        color: AppColors.chartOrange,
+        label: 'Manunuzi',
+        subtitle: 'Ununuzi wa stock kutoka kwa wasambazaji',
+        onTap: () => setState(() { _manageInitialTabKey = 'purchases'; _nav = 4; }),
+      ),
+    if (user?.canManageStaff == true)
+      MoreListItem(
+        icon: Icons.badge_rounded,
+        color: AppColors.chartPurple,
+        label: 'Wafanyikazi',
+        subtitle: 'Watumiaji na ruhusa zao',
+        onTap: () => setState(() { _manageInitialTabKey = 'staff'; _nav = 4; }),
+      ),
     MoreListItem(
       icon: Icons.people_alt_rounded,
       color: AppColors.chartBlue,
       label: 'Wateja',
       onTap: () => setState(() => _nav = 6),
     ),
-    MoreListItem(
-      icon: Icons.add_shopping_cart_outlined,
-      color: AppColors.chartGreen,
-      label: 'Maombi ya Stock',
-      subtitle: 'Omba stock, idhinisha, pokea ikiwasili',
-      onTap: () => Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => const StockRequestsScreen()),
+    if (user?.canRequestStock == true || user?.canApproveStock == true)
+      MoreListItem(
+        icon: Icons.add_shopping_cart_outlined,
+        color: AppColors.chartGreen,
+        label: 'Maombi ya Stock',
+        subtitle: 'Omba stock, idhinisha, pokea ikiwasili',
+        onTap: () => Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const StockRequestsScreen()),
+        ),
       ),
-    ),
-    MoreListItem(
-      icon: Icons.payments_rounded,
-      color: AppColors.chartRed,
-      label: 'Ongeza Matumizi',
-      subtitle: 'Kodi, umeme, usafiri...',
-      onTap: () => ExpenseFormSheet.show(context),
-    ),
+    if (user?.canAddExpense == true)
+      MoreListItem(
+        icon: Icons.payments_rounded,
+        color: AppColors.chartRed,
+        label: 'Ongeza Matumizi',
+        subtitle: 'Kodi, umeme, usafiri...',
+        onTap: () => ExpenseFormSheet.show(context),
+      ),
     MoreListItem(
       icon: Icons.analytics_rounded,
       color: AppColors.accent,
@@ -2019,31 +2026,40 @@ class _DashboardScreenState extends State<DashboardScreen>
       ),
     ),
   ];
+  }
 
   // ── Quick Access grid (mobile dashboard) — vitufe vya action, si
   // takwimu (tofauti na _kpiItems, ambayo ni stat cards zenye thamani) ──
-  List<_KpiItem> _quickAccessItems(L l) => [
+  List<_KpiItem> _quickAccessItems(L l) {
+    final user = context.read<AppProvider>().user;
+    return [
     _KpiItem('POS', '', Icons.point_of_sale_rounded, AppColors.accent,
         onTap: () => setState(() => _nav = 1)),
     _KpiItem('Bidhaa', '', Icons.inventory_2_rounded, AppColors.primaryLt,
         onTap: () => setState(() => _nav = 3)),
-    _KpiItem('Manunuzi', '', Icons.move_to_inbox_rounded, AppColors.chartOrange,
-        onTap: () => setState(() { _manageInitialTabKey = 'purchases'; _nav = 4; })),
+    if (user?.canManageProducts == true)
+      _KpiItem('Manunuzi', '', Icons.move_to_inbox_rounded, AppColors.chartOrange,
+          onTap: () => setState(() { _manageInitialTabKey = 'purchases'; _nav = 4; })),
     _KpiItem('Wateja', '', Icons.people_alt_rounded, AppColors.chartBlue,
         onTap: () => setState(() => _nav = 6)),
-    _KpiItem('Maombi ya Stock', '', Icons.add_shopping_cart_outlined, AppColors.chartGreen,
-        onTap: () => Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => const StockRequestsScreen()),
-            )),
-    _KpiItem('Wafanyikazi', '', Icons.badge_rounded, AppColors.chartPurple,
-        onTap: () => setState(() { _manageInitialTabKey = 'staff'; _nav = 4; })),
-    _KpiItem('Matumizi', '', Icons.payments_rounded, AppColors.chartRed,
-        onTap: () => ExpenseFormSheet.show(context)),
+    if (user?.canRequestStock == true || user?.canApproveStock == true)
+      _KpiItem('Maombi ya Stock', '', Icons.add_shopping_cart_outlined, AppColors.chartGreen,
+          onTap: () => Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const StockRequestsScreen()),
+              )),
+    if (user?.canManageStaff == true)
+      _KpiItem('Wafanyikazi', '', Icons.badge_rounded, AppColors.chartPurple,
+          onTap: () => setState(() { _manageInitialTabKey = 'staff'; _nav = 4; })),
+    if (user?.canAddExpense == true)
+      _KpiItem('Matumizi', '', Icons.payments_rounded, AppColors.chartRed,
+          onTap: () => ExpenseFormSheet.show(context)),
     _KpiItem('Ripoti', '', Icons.analytics_rounded, AppColors.accentBright,
         onTap: () => setState(() => _nav = 5)),
-    _KpiItem('Simamia', '', Icons.tune_rounded, AppColors.chartGray,
-        onTap: () => setState(() { _manageInitialTabKey = null; _nav = 4; })),
+    if (user?.canManageProducts == true || user?.canManageStaff == true)
+      _KpiItem('Simamia', '', Icons.tune_rounded, AppColors.chartGray,
+          onTap: () => setState(() { _manageInitialTabKey = null; _nav = 4; })),
   ];
+  }
 
   Widget _buildQuickAccessGrid(L l) {
     final items = _quickAccessItems(l);
