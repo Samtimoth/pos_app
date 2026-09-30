@@ -549,6 +549,47 @@ class ApiService {
     return _decode(res) as Map<String, dynamic>;
   }
 
+  // ── Notifications (kengele ya dashibodi: low stock/expiring/loss/muhtasari) ──
+  Future<Map<String, dynamic>> listNotifications(int businessId) async {
+    final res = await _client
+        .get(
+          Uri.parse('$baseUrl/notifications.php').replace(queryParameters: {
+            'action': 'list', 'business_id': '$businessId',
+          }),
+          headers: _headers,
+        )
+        .timeout(const Duration(seconds: 15));
+    return _decode(res) as Map<String, dynamic>;
+  }
+
+  Future<Map<String, dynamic>> markNotificationRead({
+    required int businessId,
+    required int notificationId,
+  }) async {
+    final res = await _client
+        .post(
+          Uri.parse('$baseUrl/notifications.php'),
+          headers: _headers,
+          body: jsonEncode({
+            'action': 'mark_read', 'business_id': businessId,
+            'notification_id': notificationId,
+          }),
+        )
+        .timeout(const Duration(seconds: 15));
+    return _decode(res) as Map<String, dynamic>;
+  }
+
+  Future<Map<String, dynamic>> markAllNotificationsRead(int businessId) async {
+    final res = await _client
+        .post(
+          Uri.parse('$baseUrl/notifications.php'),
+          headers: _headers,
+          body: jsonEncode({'action': 'mark_all_read', 'business_id': businessId}),
+        )
+        .timeout(const Duration(seconds: 15));
+    return _decode(res) as Map<String, dynamic>;
+  }
+
   Future<List<dynamic>> getSaleReturns(int saleId) async {
     try {
       final uri = Uri.parse('$baseUrl/sale_returns.php')

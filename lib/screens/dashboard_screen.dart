@@ -59,6 +59,8 @@ class _DashboardScreenState extends State<DashboardScreen>
   bool _balanceVisible = true;
   int _productsRefreshKey = 0;
   int? _lastTutorialNav;
+  List<Map<String, dynamic>> _notifications = [];
+  int _unreadNotifCount = 0;
 
   @override
   void initState() {
@@ -69,6 +71,7 @@ class _DashboardScreenState extends State<DashboardScreen>
     );
     _fadeAnim = CurvedAnimation(parent: _animCtrl, curve: Curves.easeOut);
     _loadData();
+    _loadNotifications();
     // Reload once queued offline work reaches the server (temp ids → real).
     SyncService.instance.addChangeListener(_onSynced);
     SyncService.instance.syncNow();
@@ -90,6 +93,53 @@ class _DashboardScreenState extends State<DashboardScreen>
       onForegroundMessage: (message) {
         if (mounted) PushNotificationService.showForegroundBanner(context, message);
       },
+    );
+  }
+
+  Future<void> _loadNotifications() async {
+    final app = context.read<AppProvider>();
+    if (app.api == null || app.selectedBusiness == null) return;
+    try {
+      final res = await app.api!.listNotifications(app.selectedBusiness!.businessId);
+      if (!mounted) return;
+      if (res['success'] == true) {
+        setState(() {
+          _notifications = ((res['notifications'] as List?) ?? [])
+              .map((e) => Map<String, dynamic>.from(e as Map))
+              .toList();
+          _unreadNotifCount = (res['unread_count'] as num?)?.toInt() ?? 0;
+        });
+      }
+    } catch (_) {} // si muhimu kwa uendeshaji wa dashibodi kama itafeli
+  }
+
+  void _openNotifications() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _NotificationsSheet(
+        notifications: _notifications,
+        onMarkRead: (id) async {
+          final app = context.read<AppProvider>();
+          if (app.api == null || app.selectedBusiness == null) return;
+          try {
+            await app.api!.markNotificationRead(
+              businessId: app.selectedBusiness!.businessId,
+              notificationId: id,
+            );
+          } catch (_) {}
+          _loadNotifications();
+        },
+        onMarkAllRead: () async {
+          final app = context.read<AppProvider>();
+          if (app.api == null || app.selectedBusiness == null) return;
+          try {
+            await app.api!.markAllNotificationsRead(app.selectedBusiness!.businessId);
+          } catch (_) {}
+          _loadNotifications();
+        },
+      ),
     );
   }
 
@@ -1228,7 +1278,50 @@ class _DashboardScreenState extends State<DashboardScreen>
                   // Theme toggle
                   _ThemeToggleButton(onWhiteBackground: false),
                   const SizedBox(width: 10),
-                  // Notifications / refresh
+                  // Notification bell (low stock/expiring/loss/muhtasari)
+                  GestureDetector(
+                    onTap: _openNotifications,
+                    child: Container(
+                      width: 42,
+                      height: 42,
+                      decoration: BoxDecoration(
+                        color: Colors.white.withAlpha(25),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Stack(
+                        clipBehavior: Clip.none,
+                        alignment: Alignment.center,
+                        children: [
+                          const Icon(
+                            Icons.notifications_rounded,
+                            color: Colors.white,
+                            size: 22,
+                          ),
+                          if (_unreadNotifCount > 0)
+                            Positioned(
+                              top: 4,
+                              right: 6,
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                                constraints: const BoxConstraints(minWidth: 15),
+                                decoration: BoxDecoration(
+                                  color: AppColors.chartRed,
+                                  borderRadius: BorderRadius.circular(20),
+                                  border: Border.all(color: AppColors.primaryDk, width: 1.2),
+                                ),
+                                child: Text(
+                                  _unreadNotifCount > 9 ? '9+' : '$_unreadNotifCount',
+                                  textAlign: TextAlign.center,
+                                  style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold),
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  // Refresh
                   GestureDetector(
                     onTap: _loadData,
                     child: Container(
@@ -1369,7 +1462,44 @@ class _DashboardScreenState extends State<DashboardScreen>
                 ],
               ),
 
-              const SizedBox(height: 24),
+              const SizedBox(height: 14),
+
+              // ── Pesa iliyobaki mkononi (mwezi huu): mauzo yaliyolipwa
+              // toa manunuzi+matumizi yaliyolipwa — angalia dashboard.php's
+              // cash_in_hand_month (muundo ule ule wa cashflow.php).
+              Builder(builder: (context) {
+                final cashInHand = (_stats['cash_in_hand_month'] as num?)?.toDouble() ?? 0.0;
+                final isNeg = cashInHand < 0;
+                return Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withAlpha(18),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.account_balance_wallet_rounded,
+                          color: isNeg ? Colors.redAccent : Colors.white70, size: 15),
+                      const SizedBox(width: 8),
+                      Text(
+                        l.isSw ? 'Pesa Mkononi (Mwezi Huu):' : 'Cash in Hand (This Month):',
+                        style: const TextStyle(color: Colors.white70, fontSize: 11.5),
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        'TZS ${_numFmt.format(cashInHand.abs())}${isNeg ? " (hasara)" : ""}',
+                        style: TextStyle(
+                          color: isNeg ? Colors.redAccent : Colors.white,
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              }),
+
+              const SizedBox(height: 20),
 
               // ── Action buttons (lime, like image) ──────────────────
               Row(
@@ -3504,4 +3634,100 @@ class _FintechDialog extends StatelessWidget {
       ),
     ],
   );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Notifications sheet — low_stock / expiring / loss / daily_summary, kutoka
+// check_alerts.php (cron ya kila siku) na kusomwa kupitia notifications.php.
+// ─────────────────────────────────────────────────────────────────────────────
+class _NotificationsSheet extends StatelessWidget {
+  final List<Map<String, dynamic>> notifications;
+  final ValueChanged<int> onMarkRead;
+  final VoidCallback onMarkAllRead;
+  const _NotificationsSheet({
+    required this.notifications,
+    required this.onMarkRead,
+    required this.onMarkAllRead,
+  });
+
+  (IconData, Color) _iconFor(String type) => switch (type) {
+        'low_stock' => (Icons.inventory_2_rounded, AppColors.chartOrange),
+        'expiring' => (Icons.event_busy_rounded, AppColors.chartRed),
+        'loss' => (Icons.trending_down_rounded, AppColors.chartRed),
+        'daily_summary' => (Icons.summarize_rounded, AppColors.primaryLt),
+        _ => (Icons.notifications_rounded, AppColors.textMuted),
+      };
+
+  @override
+  Widget build(BuildContext context) {
+    final mq = MediaQuery.of(context);
+    return Container(
+      constraints: BoxConstraints(maxHeight: mq.size.height * 0.85),
+      decoration: BoxDecoration(
+        color: AppColors.bgCard,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const SizedBox(height: 10),
+          Container(width: 40, height: 4, decoration: BoxDecoration(
+              color: AppColors.border, borderRadius: BorderRadius.circular(2))),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 14, 12, 6),
+            child: Row(children: [
+              Expanded(
+                child: Text('Arifa', style: TextStyle(
+                    color: AppColors.textWhite, fontSize: 16, fontWeight: FontWeight.w800)),
+              ),
+              if (notifications.any((n) => n['is_read'] != true))
+                TextButton(
+                  onPressed: onMarkAllRead,
+                  child: const Text('Zimewa zote', style: TextStyle(fontSize: 12)),
+                ),
+              IconButton(onPressed: () => Navigator.pop(context), icon: Icon(Icons.close_rounded, color: AppColors.textMuted)),
+            ]),
+          ),
+          Divider(color: AppColors.border, height: 1),
+          Flexible(
+            child: notifications.isEmpty
+                ? Padding(
+                    padding: const EdgeInsets.all(40),
+                    child: Center(
+                      child: Text('Hakuna arifa bado', style: TextStyle(color: AppColors.textMuted)),
+                    ),
+                  )
+                : ListView.separated(
+                    shrinkWrap: true,
+                    padding: const EdgeInsets.symmetric(vertical: 6),
+                    itemCount: notifications.length,
+                    separatorBuilder: (_, _) => Divider(color: AppColors.border, height: 1),
+                    itemBuilder: (_, i) {
+                      final n = notifications[i];
+                      final isRead = n['is_read'] == true;
+                      final (icon, color) = _iconFor('${n['type']}');
+                      return ListTile(
+                        onTap: isRead ? null : () => onMarkRead(n['notification_id'] as int),
+                        leading: Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(color: color.withAlpha(30), borderRadius: BorderRadius.circular(10)),
+                          child: Icon(icon, color: color, size: 18),
+                        ),
+                        title: Text('${n['title']}', style: TextStyle(
+                            color: AppColors.textWhite, fontSize: 13,
+                            fontWeight: isRead ? FontWeight.normal : FontWeight.bold)),
+                        subtitle: Text('${n['body']}', style: TextStyle(color: AppColors.textMuted, fontSize: 11.5)),
+                        trailing: isRead ? null : Container(
+                          width: 8, height: 8,
+                          decoration: BoxDecoration(color: AppColors.primaryLt, shape: BoxShape.circle),
+                        ),
+                      );
+                    },
+                  ),
+          ),
+          SizedBox(height: mq.padding.bottom + 8),
+        ],
+      ),
+    );
+  }
 }
