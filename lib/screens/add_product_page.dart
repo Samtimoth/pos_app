@@ -13,6 +13,7 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:image_picker/image_picker.dart';
 import '../providers/app_provider.dart';
+import '../providers/theme_provider.dart';
 import '../theme/app_theme.dart';
 import '../l10n/app_l10n.dart';
 
@@ -342,6 +343,11 @@ class _FormTabState extends State<_FormTab> {
 
   Future<void> _pickExpiryDate() async {
     final now = DateTime.now();
+    // AppColors.bgCard/textWhite hubadilika kutegemea mandhari ya SASA
+    // (mchana/usiku) — kulazimisha ThemeData.dark() bila kujali hilo
+    // kulisababisha maandishi meupe juu ya background nyeupe (mandhari
+    // ya mchana) — kalenda ikaonekana "tupu"/plain.
+    final isDark = context.read<ThemeProvider>().isDark;
     final picked = await showDatePicker(
       context: context,
       initialDate: _expiryCtr.text.isNotEmpty
@@ -350,11 +356,12 @@ class _FormTabState extends State<_FormTab> {
       firstDate: DateTime(now.year - 1),
       lastDate: now.add(const Duration(days: 365 * 10)),
       builder: (ctx, child) => Theme(
-        data: ThemeData.dark().copyWith(
-          colorScheme: ColorScheme.dark(
+        data: (isDark ? ThemeData.dark() : ThemeData.light()).copyWith(
+          colorScheme: (isDark ? const ColorScheme.dark() : const ColorScheme.light()).copyWith(
             primary: AppColors.primaryLt,
             onPrimary: AppColors.bgDark,
             surface: AppColors.bgCard,
+            onSurface: AppColors.textWhite,
           ),
         ),
         child: child!,

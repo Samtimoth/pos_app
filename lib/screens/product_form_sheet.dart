@@ -14,6 +14,7 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import '../models/product.dart'; // exports ProductUnit
 import '../providers/app_provider.dart';
+import '../providers/theme_provider.dart';
 import '../theme/app_theme.dart';
 import '../l10n/app_l10n.dart';
 
@@ -246,17 +247,24 @@ class _AddProductSheetState extends State<AddProductSheet> {
     final initial = _expiryCtr.text.isNotEmpty
         ? (DateTime.tryParse(_expiryCtr.text) ?? now.add(const Duration(days: 180)))
         : now.add(const Duration(days: 180));
+    // AppColors.bgCard/textWhite hubadilika kutegemea mandhari ya SASA
+    // (mchana/usiku) — kulazimisha ThemeData.dark() bila kujali hilo
+    // kulisababisha maandishi meupe juu ya background nyeupe (mandhari
+    // ya mchana) — kalenda ikaonekana "tupu"/plain. Sasa tunachagua
+    // msingi sahihi kulingana na mandhari halisi ya sasa.
+    final isDark = context.read<ThemeProvider>().isDark;
     final picked = await showDatePicker(
       context: context,
       initialDate: initial,
       firstDate: DateTime(now.year - 1),
       lastDate:  now.add(const Duration(days: 365 * 10)),
       builder: (ctx, child) => Theme(
-        data: ThemeData.dark().copyWith(
-          colorScheme: ColorScheme.dark(
+        data: (isDark ? ThemeData.dark() : ThemeData.light()).copyWith(
+          colorScheme: (isDark ? const ColorScheme.dark() : const ColorScheme.light()).copyWith(
             primary:   AppColors.primaryLt,
             onPrimary: AppColors.bgDark,
             surface:   AppColors.bgCard,
+            onSurface: AppColors.textWhite,
           ),
         ),
         child: child!,
