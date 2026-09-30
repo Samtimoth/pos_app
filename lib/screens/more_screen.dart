@@ -29,7 +29,12 @@ class MoreScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final list = ListView.separated(
-      padding: EdgeInsets.fromLTRB(16, desktop ? 20 : 12, 16, 24),
+      padding: EdgeInsets.fromLTRB(
+        16,
+        desktop ? 20 : 12,
+        16,
+        desktop ? 24 : MediaQuery.of(context).viewPadding.bottom + 90,
+      ),
       itemCount: items.length,
       separatorBuilder: (_, _) => const SizedBox(height: 8),
       itemBuilder: (_, i) {
