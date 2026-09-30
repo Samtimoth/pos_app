@@ -80,6 +80,17 @@ class User {
   bool get canApproveStock =>
       isSuperAdmin || _managerPlus.contains(_r) || _r == 'stockist';
 
+  /// Kurekodi hatua ya "Ununuzi" (msambazaji/bei/kumbukumbu) baada ya idhini —
+  /// server inalazimisha hili tena kupitia ruhusa ya `stock.purchase`
+  /// (inayotumia `stock.*` wildcard, sawa na canApproveStock).
+  bool get canConfirmPurchase =>
+      isSuperAdmin || _managerPlus.contains(_r) || _r == 'stockist';
+
+  /// Kupokea stock ikiwasili (batches) — jina jipya la wazi kwa canRequestStock
+  /// (server bado inatumia ruhusa ile ile `stock.request`, hakuna badiliko
+  /// la tabia — jina hili ni kwa uwazi wa UI pekee).
+  bool get canReceiveStock => canRequestStock;
+
   /// Kuhariri maelezo ya bidhaa tu (jina/picha/kategoria) — si bei wala stock
   /// (angalia canManageProducts kwa uhariri kamili, update_product.php
   /// inalazimisha hili tena upande wa server bila kujali UI)

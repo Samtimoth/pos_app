@@ -61,6 +61,7 @@ class _DashboardScreenState extends State<DashboardScreen>
   int? _lastTutorialNav;
   List<Map<String, dynamic>> _notifications = [];
   int _unreadNotifCount = 0;
+  int? _stockRequestFocusId;
 
   @override
   void initState() {
@@ -138,6 +139,12 @@ class _DashboardScreenState extends State<DashboardScreen>
             await app.api!.markAllNotificationsRead(app.selectedBusiness!.businessId);
           } catch (_) {}
           _loadNotifications();
+        },
+        onOpenEntity: (type, id) {
+          Navigator.pop(context);
+          if (type == 'stock_request') {
+            setState(() { _nav = 9; _stockRequestFocusId = id; });
+          }
         },
       ),
     );
@@ -1992,9 +1999,7 @@ class _DashboardScreenState extends State<DashboardScreen>
         color: AppColors.chartGreen,
         label: 'Maombi ya Stock',
         subtitle: 'Omba stock, idhinisha, pokea ikiwasili',
-        onTap: () => Navigator.of(context).push(
-          MaterialPageRoute(builder: (_) => const StockRequestsScreen()),
-        ),
+        onTap: () => setState(() => _nav = 9),
       ),
     if (user?.canAddExpense == true)
       MoreListItem(
@@ -2044,9 +2049,7 @@ class _DashboardScreenState extends State<DashboardScreen>
         onTap: () => setState(() => _nav = 6)),
     if (user?.canRequestStock == true || user?.canApproveStock == true)
       _KpiItem('Maombi ya Stock', '', Icons.add_shopping_cart_outlined, AppColors.chartGreen,
-          onTap: () => Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => const StockRequestsScreen()),
-              )),
+          onTap: () => setState(() => _nav = 9)),
     if (user?.canManageStaff == true)
       _KpiItem('Wafanyikazi', '', Icons.badge_rounded, AppColors.chartPurple,
           onTap: () => setState(() { _manageInitialTabKey = 'staff'; _nav = 4; })),
@@ -3095,6 +3098,8 @@ class _DashboardScreenState extends State<DashboardScreen>
         return StockLedgerScreen(desktop: desktop);
       case 8:
         return MoreScreen(desktop: desktop, items: _moreItems(l));
+      case 9:
+        return StockRequestsScreen(desktop: desktop, initialRequestId: _stockRequestFocusId);
       default:
         return desktop ? _buildDesktopDash(l) : _buildDashContent(l);
     }
@@ -3660,10 +3665,12 @@ class _NotificationsSheet extends StatelessWidget {
   final List<Map<String, dynamic>> notifications;
   final ValueChanged<int> onMarkRead;
   final VoidCallback onMarkAllRead;
+  final void Function(String entityType, int entityId)? onOpenEntity;
   const _NotificationsSheet({
     required this.notifications,
     required this.onMarkRead,
     required this.onMarkAllRead,
+    this.onOpenEntity,
   });
 
   (IconData, Color) _iconFor(String type) => switch (type) {
@@ -3671,6 +3678,7 @@ class _NotificationsSheet extends StatelessWidget {
         'expiring' => (Icons.event_busy_rounded, AppColors.chartRed),
         'loss' => (Icons.trending_down_rounded, AppColors.chartRed),
         'daily_summary' => (Icons.summarize_rounded, AppColors.primaryLt),
+        'stock_request' => (Icons.add_shopping_cart_outlined, AppColors.chartGreen),
         _ => (Icons.notifications_rounded, AppColors.textMuted),
       };
 
@@ -3722,8 +3730,14 @@ class _NotificationsSheet extends StatelessWidget {
                       final n = notifications[i];
                       final isRead = n['is_read'] == true;
                       final (icon, color) = _iconFor('${n['type']}');
+                      final entityType = n['entity_type'] as String?;
+                      final entityId = n['entity_id'] as int?;
+                      final canOpen = entityType != null && entityId != null && onOpenEntity != null;
                       return ListTile(
-                        onTap: isRead ? null : () => onMarkRead(n['notification_id'] as int),
+                        onTap: (!isRead || canOpen) ? () {
+                          if (!isRead) onMarkRead(n['notification_id'] as int);
+                          if (canOpen) onOpenEntity!(entityType, entityId);
+                        } : null,
                         leading: Container(
                           padding: const EdgeInsets.all(8),
                           decoration: BoxDecoration(color: color.withAlpha(30), borderRadius: BorderRadius.circular(10)),

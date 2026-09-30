@@ -318,9 +318,19 @@ class CrmApi {
     });
   }
 
-  Future<Map<String, dynamic>> approveStockRequest(int businessId, int requestId, {String note = ''}) =>
+  Future<Map<String, dynamic>> getStockRequest(int businessId, int requestId) async {
+    final r = await _get('stock_requests.php', {
+      'action': 'get', 'business_id': '$businessId', 'request_id': '$requestId',
+    });
+    return Map<String, dynamic>.from(r['request'] as Map);
+  }
+
+  Future<Map<String, dynamic>> approveStockRequest(
+    int businessId, int requestId, {double? approvedQty, String note = '',
+  }) =>
       _post('stock_requests.php', {
-        'action': 'approve', 'business_id': businessId, 'request_id': requestId, 'approve_note': note,
+        'action': 'approve', 'business_id': businessId, 'request_id': requestId,
+        'approved_qty': ?approvedQty, 'approve_note': note,
       });
 
   Future<Map<String, dynamic>> rejectStockRequest(int businessId, int requestId, {String note = ''}) =>
@@ -328,16 +338,33 @@ class CrmApi {
         'action': 'reject', 'business_id': businessId, 'request_id': requestId, 'approve_note': note,
       });
 
+  Future<Map<String, dynamic>> cancelStockRequest(int businessId, int requestId) =>
+      _post('stock_requests.php', {
+        'action': 'cancel', 'business_id': businessId, 'request_id': requestId,
+      });
+
+  Future<Map<String, dynamic>> purchaseStockRequest({
+    required int businessId,
+    required int requestId,
+    required double purchasedQty,
+    required double purchaseUnitCost,
+    int? supplierId,
+    String purchaseRef = '',
+    String purchaseNote = '',
+  }) => _post('stock_requests.php', {
+        'action': 'purchase', 'business_id': businessId, 'request_id': requestId,
+        'purchased_qty': purchasedQty, 'purchase_unit_cost': purchaseUnitCost,
+        'supplier_id': ?supplierId, 'purchase_ref': purchaseRef, 'purchase_note': purchaseNote,
+      });
+
+  /// Kila batch: {'quantity': double, 'buy_price': double, 'expiry_date': String?, 'batch_number': String?}
   Future<Map<String, dynamic>> receiveStockRequest({
     required int businessId,
     required int requestId,
-    required double receivedQty,
-    required double receivedBuyPrice,
-    String? receivedExpiryDate,
+    required List<Map<String, dynamic>> batches,
   }) => _post('stock_requests.php', {
         'action': 'receive', 'business_id': businessId, 'request_id': requestId,
-        'received_qty': receivedQty, 'received_buy_price': receivedBuyPrice,
-        'received_expiry_date': ?receivedExpiryDate,
+        'batches': batches,
       });
 
   // ═══════════════════════════════════════════════════════════════════════
