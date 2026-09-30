@@ -14,6 +14,7 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import '../models/product.dart'; // exports ProductUnit
 import '../providers/app_provider.dart';
+import '../providers/theme_provider.dart';
 import '../theme/app_theme.dart';
 import '../l10n/app_l10n.dart';
 
@@ -24,8 +25,15 @@ class AddProductSheet extends StatefulWidget {
   final VoidCallback onSaved;
   /// When non-null, the sheet opens in **edit** mode with fields pre-filled.
   final Product? initialProduct;
+  /// True when the caller only has `products.edit_basic` (e.g. cashier):
+  /// name/category/unit/barcode/description/image stay editable, price and
+  /// stock fields become read-only — update_product.php enforces this again
+  /// server-side regardless of what this UI sends.
+  final bool basicEditOnly;
 
-  const AddProductSheet({super.key, required this.onSaved, this.initialProduct});
+  const AddProductSheet({
+    super.key, required this.onSaved, this.initialProduct, this.basicEditOnly = false,
+  });
 
   bool get isEditMode => initialProduct != null;
 
@@ -59,7 +67,10 @@ class _AddProductSheetState extends State<AddProductSheet> {
   bool _barcodeFocused = false; // desktop: scan card highlight when focused
   XFile? _imageFile;             // newly picked local image (not yet uploaded)
 
-  bool get _canScan => !kIsWeb && (Platform.isAndroid || Platform.isIOS);
+  /// Camera barcode scanning: phones + web browsers (mobile_scanner/ZXing).
+  bool get _canScan => kIsWeb || Platform.isAndroid || Platform.isIOS;
+  /// Native gallery/camera image pickers (desktop uses a file dialog).
+  bool get _isMobile => !kIsWeb && (Platform.isAndroid || Platform.isIOS);
 
   void _onBarcodeChanged()     => setState(() {});
   void _onBarcodeFocusChange() => setState(() => _barcodeFocused = _barcodeFocusNode.hasFocus);
@@ -236,17 +247,24 @@ class _AddProductSheetState extends State<AddProductSheet> {
     final initial = _expiryCtr.text.isNotEmpty
         ? (DateTime.tryParse(_expiryCtr.text) ?? now.add(const Duration(days: 180)))
         : now.add(const Duration(days: 180));
+    // AppColors.bgCard/textWhite hubadilika kutegemea mandhari ya SASA
+    // (mchana/usiku) — kulazimisha ThemeData.dark() bila kujali hilo
+    // kulisababisha maandishi meupe juu ya background nyeupe (mandhari
+    // ya mchana) — kalenda ikaonekana "tupu"/plain. Sasa tunachagua
+    // msingi sahihi kulingana na mandhari halisi ya sasa.
+    final isDark = context.read<ThemeProvider>().isDark;
     final picked = await showDatePicker(
       context: context,
       initialDate: initial,
       firstDate: DateTime(now.year - 1),
       lastDate:  now.add(const Duration(days: 365 * 10)),
       builder: (ctx, child) => Theme(
-        data: ThemeData.dark().copyWith(
-          colorScheme: ColorScheme.dark(
+        data: (isDark ? ThemeData.dark() : ThemeData.light()).copyWith(
+          colorScheme: (isDark ? const ColorScheme.dark() : const ColorScheme.light()).copyWith(
             primary:   AppColors.primaryLt,
             onPrimary: AppColors.bgDark,
             surface:   AppColors.bgCard,
+            onSurface: AppColors.textWhite,
           ),
         ),
         child: child!,
@@ -318,7 +336,7 @@ class _AddProductSheetState extends State<AddProductSheet> {
             ? widget.initialProduct!.productId
             : (res['product_id'] as num?)?.toInt() ?? 0;
 
-        if (savedPid > 0 && app.api != null) {
+        if (savedPid > 0 && app.api != null && !widget.basicEditOnly) {
           final validUnits = _sellingUnits
               .where((u) => u.nameCtr.text.trim().isNotEmpty)
               .map((u) => {
@@ -522,53 +540,81 @@ class _AddProductSheetState extends State<AddProductSheet> {
                   ]),
                 ))),
 
-                // ── Pricing ───────────────────────────────────────────────
-                SliverToBoxAdapter(child: StaggeredItem(index: 2, child: _section(
-                  icon: Icons.payments_rounded,
-                  label: l.isSw ? 'Bei' : 'Pricing',
-                  child: Column(children: [
-                    Row(children: [
-                      Expanded(child: _field(ctrl: _buyPriceCtr, label: l.buyPrice,
-                          icon: Icons.arrow_downward_rounded,
-                          iconColor: AppColors.chartOrange,
-                          keyboardType: TextInputType.number)),
-                      const SizedBox(width: 12),
-                      Expanded(child: _field(ctrl: _sellPriceCtr, label: l.sellPrice,
-                          icon: Icons.arrow_upward_rounded,
-                          iconColor: AppColors.primaryLt,
-                          keyboardType: TextInputType.number,
-                          required: true,
-                          validator: (v) {
-                            if (v?.trim().isEmpty ?? true) return '${l.sellPrice} ${l.requiredField}';
-                            if ((double.tryParse(v!) ?? 0) <= 0) return '> 0';
-                            return null;
-                          })),
+                // ── Pricing (siyo kwa basicEditOnly — imefichwa kabisa, si
+                // tu imezimwa, kama alivyoomba mtumiaji) ──────────────────
+                if (!widget.basicEditOnly)
+                  SliverToBoxAdapter(child: StaggeredItem(index: 2, child: _section(
+                    icon: Icons.payments_rounded,
+                    label: l.isSw ? 'Bei' : 'Pricing',
+                    child: Column(children: [
+                      Row(children: [
+                        Expanded(child: _field(ctrl: _buyPriceCtr, label: l.buyPrice,
+                            icon: Icons.arrow_downward_rounded,
+                            iconColor: AppColors.chartOrange,
+                            keyboardType: TextInputType.number)),
+                        const SizedBox(width: 12),
+                        Expanded(child: _field(ctrl: _sellPriceCtr, label: l.sellPrice,
+                            icon: Icons.arrow_upward_rounded,
+                            iconColor: AppColors.primaryLt,
+                            keyboardType: TextInputType.number,
+                            required: true,
+                            validator: (v) {
+                              if (v?.trim().isEmpty ?? true) return '${l.sellPrice} ${l.requiredField}';
+                              if ((double.tryParse(v!) ?? 0) <= 0) return '> 0';
+                              return null;
+                            })),
+                      ]),
+                      const SizedBox(height: 12),
+                      _field(ctrl: _wholesaleCtr, label: l.wholesalePrice,
+                          icon: Icons.storefront_outlined,
+                          keyboardType: TextInputType.number),
+                      const SizedBox(height: 10),
+                      // Faida ya moja kwa moja — wanao ruhusa pekee (Hatua 1)
+                      if (context.read<AppProvider>().user?.canSeeCosts ?? false)
+                        _ProfitPreview(buyCtr: _buyPriceCtr, sellCtr: _sellPriceCtr),
                     ]),
-                    const SizedBox(height: 12),
-                    _field(ctrl: _wholesaleCtr, label: l.wholesalePrice,
-                        icon: Icons.storefront_outlined,
-                        keyboardType: TextInputType.number),
-                    const SizedBox(height: 10),
-                    _ProfitPreview(buyCtr: _buyPriceCtr, sellCtr: _sellPriceCtr),
-                  ]),
-                ))),
+                  ))),
 
-                // ── Stock ─────────────────────────────────────────────────
-                SliverToBoxAdapter(child: StaggeredItem(index: 3, child: _section(
-                  icon: Icons.layers_rounded,
-                  label: l.isSw ? 'Hifadhi (Stock)' : 'Stock',
-                  child: Row(children: [
-                    Expanded(child: _field(ctrl: _stockCtr, label: l.stock,
-                        icon: Icons.inventory_rounded, iconColor: AppColors.accent,
-                        keyboardType: TextInputType.number, required: true,
-                        validator: (v) => int.tryParse(v ?? '') == null ? '≥ 0' : null)),
-                    const SizedBox(width: 12),
-                    Expanded(child: _field(ctrl: _minStockCtr, label: l.minStock,
-                        icon: Icons.warning_amber_rounded, iconColor: AppColors.chartOrange,
-                        keyboardType: TextInputType.number, required: true,
-                        validator: (v) => int.tryParse(v ?? '') == null ? '≥ 0' : null)),
-                  ]),
-                ))),
+                // ── Stock (siyo kwa basicEditOnly) ──────────────────────
+                if (!widget.basicEditOnly)
+                  SliverToBoxAdapter(child: StaggeredItem(index: 3, child: _section(
+                    icon: Icons.layers_rounded,
+                    label: l.isSw ? 'Hifadhi (Stock)' : 'Stock',
+                    child: Row(children: [
+                      Expanded(child: _field(ctrl: _stockCtr, label: l.stock,
+                          icon: Icons.inventory_rounded, iconColor: AppColors.accent,
+                          keyboardType: TextInputType.number, required: true,
+                          validator: (v) => int.tryParse(v ?? '') == null ? '≥ 0' : null)),
+                      const SizedBox(width: 12),
+                      Expanded(child: _field(ctrl: _minStockCtr, label: l.minStock,
+                          icon: Icons.warning_amber_rounded, iconColor: AppColors.chartOrange,
+                          keyboardType: TextInputType.number, required: true,
+                          validator: (v) => int.tryParse(v ?? '') == null ? '≥ 0' : null)),
+                    ]),
+                  ))),
+                if (widget.basicEditOnly)
+                  SliverToBoxAdapter(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 20),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                        decoration: BoxDecoration(
+                          color: AppColors.chartBlue.withAlpha(20),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Row(children: [
+                          Icon(Icons.info_outline_rounded, size: 16, color: AppColors.chartBlue),
+                          const SizedBox(width: 8),
+                          Expanded(child: Text(
+                            l.isSw
+                                ? 'Bei na stock hazibadilishwi hapa — muulize meneja/mmiliki.'
+                                : 'Price and stock cannot be changed here — ask your manager/owner.',
+                            style: TextStyle(color: AppColors.chartBlue, fontSize: 11),
+                          )),
+                        ]),
+                      ),
+                    ),
+                  ),
 
                 // ── Description ───────────────────────────────────────────
                 SliverToBoxAdapter(child: StaggeredItem(index: 4, child: _section(
@@ -578,8 +624,9 @@ class _AddProductSheetState extends State<AddProductSheet> {
                       icon: Icons.edit_note_rounded, maxLines: 3),
                 ))),
 
-                // ── Selling Units ─────────────────────────────────────────
-                SliverToBoxAdapter(child: StaggeredItem(index: 5, child: _unitsSection(l))),
+                // ── Selling Units (bei za unit — siyo kwa basicEditOnly) ──
+                if (!widget.basicEditOnly)
+                  SliverToBoxAdapter(child: StaggeredItem(index: 5, child: _unitsSection(l))),
 
                 // ── Save button ───────────────────────────────────────────
                 SliverToBoxAdapter(child: StaggeredItem(index: 6, child: Padding(
@@ -676,7 +723,7 @@ class _AddProductSheetState extends State<AddProductSheet> {
 
           // Image preview area
           GestureDetector(
-            onTap: _canScan ? _pickImageFromGallery : _pickImageDesktop,
+            onTap: _isMobile ? _pickImageFromGallery : _pickImageDesktop,
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 200),
               height: 160,
@@ -708,7 +755,7 @@ class _AddProductSheetState extends State<AddProductSheet> {
 
           const SizedBox(height: 10),
           // Pick buttons
-          if (_canScan)
+          if (_isMobile)
             Row(children: [
               Expanded(child: _imgPickBtn(
                 icon: Icons.camera_alt_rounded,
@@ -1867,11 +1914,41 @@ class _ExcelImportSheetState extends State<ExcelImportSheet> {
         _parsing  = false;
       });
     } catch (e) {
-      if (mounted) {
-        _snack('${L.of(context).parseError}: $e', Colors.redAccent);
-        setState(() => _parsing = false);
+      if (!mounted) return;
+      setState(() => _parsing = false);
+      final msg = '$e';
+      if (msg.contains('Damaged Excel file') || msg.contains('styles')) {
+        _showUnreadableFileDialog();
+      } else {
+        _snack('${L.of(context).parseError}: $msg', Colors.redAccent);
       }
     }
+  }
+
+  void _showUnreadableFileDialog() {
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: AppColors.bgCard,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        icon: const Icon(Icons.warning_amber_rounded, color: Colors.orangeAccent, size: 32),
+        title: Text('Faili haisomeki', style: TextStyle(color: AppColors.textWhite, fontSize: 16)),
+        content: Text(
+          'Faili hili la Excel lina muundo ambao mfumo wetu hauwezi kusoma vizuri '
+          '(mara nyingi hutokea kwa faili zilizotoka programu fulani za zamani au za '
+          'kigeni).\n\nJaribu mojawapo:\n'
+          '1. Fungua faili kwenye Google Sheets, kisha "File > Download > Microsoft Excel (.xlsx)" upya, kisha jaribu tena.\n'
+          '2. Au hifadhi (Save As) faili kama CSV badala ya Excel, kisha pakia hiyo CSV hapa.',
+          style: TextStyle(color: AppColors.textMuted, fontSize: 13, height: 1.5),
+        ),
+        actions: [
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Nimeelewa'),
+          ),
+        ],
+      ),
+    );
   }
 
   List<_ImportRow> _parseXlsx(Uint8List bytes) {
@@ -2668,6 +2745,7 @@ class _ScanToAddSheetState extends State<ScanToAddSheet>
       if (res['success'] == true) {
         setState(() => _added++);
         widget.onProductsAdded();
+        _snack('✅ ${_nameCtr.text.trim()} imeongezwa! (Jumla: $_added)', AppColors.accent);
         _resetScan();
       } else if (res['exists'] == true) {
         _snack(L.of(context).productExists, Colors.orange);

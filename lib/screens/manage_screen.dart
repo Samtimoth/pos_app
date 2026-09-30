@@ -1,10 +1,18 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/business.dart';
 import '../providers/app_provider.dart';
 import '../providers/theme_provider.dart';
 import '../theme/app_theme.dart';
+import '../widgets/first_run_tutorial.dart';
+import '../widgets/premium_empty_state.dart';
 import '../l10n/app_l10n.dart';
+import 'purchase_orders_screen.dart';
+import 'purchases_screen.dart';
+import 'quotations_screen.dart';
+import 'stock_transfers_screen.dart';
+import 'suppliers_screen.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Manage Screen — Categories + Units
@@ -12,7 +20,12 @@ import '../l10n/app_l10n.dart';
 class ManageScreen extends StatefulWidget {
   final bool desktop;
   final int initialTab;
-  const ManageScreen({super.key, this.desktop = false, this.initialTab = 0});
+  /// Tab key (matches `_visible`'s string keys, e.g. 'staff', 'purchases')
+  /// to jump to directly — more reliable than [initialTab]'s raw index,
+  /// since tab positions shift depending on which tabs a role/business can
+  /// see. Takes precedence over [initialTab] when the key is found.
+  final String? initialTabKey;
+  const ManageScreen({super.key, this.desktop = false, this.initialTab = 0, this.initialTabKey});
   @override
   State<ManageScreen> createState() => _ManageScreenState();
 }
@@ -21,27 +34,220 @@ class _ManageScreenState extends State<ManageScreen>
     with SingleTickerProviderStateMixin {
   late TabController _tab;
 
+  // ── Hatua 1: tabs zinaonekana kwa role ──
+  // Categories/Units: canManageProducts · Staff: canManageStaff
+  late final List<String> _visible;
+
+  // ── Mobile chip selector (premium scrollable tabs) ──
+  int _selected = 0;
+  final ScrollController _chipScroll = ScrollController();
+  final List<GlobalKey> _chipKeys = [];
+
   @override
   void initState() {
     super.initState();
+    final app = context.read<AppProvider>();
+    final user = app.user;
+    final multiBranch = (app.selectedBusiness?.branches.length ?? 0) > 1;
+    _visible = [
+      if (user == null || user.canManageProducts) ...[
+        'categories', 'units', 'suppliers', 'purchase_orders', 'purchases', 'quotations',
+        if (multiBranch) 'stock_transfers',
+      ],
+      if (user == null || user.canManageStaff) 'staff',
+    ];
+    var initIdx = widget.initialTab;
+    if (widget.initialTabKey != null) {
+      final keyed = _visible.indexOf(widget.initialTabKey!);
+      if (keyed >= 0) initIdx = keyed;
+    }
+    if (_visible.isEmpty) {
+      initIdx = 0;
+    } else if (initIdx >= _visible.length) {
+      initIdx = _visible.length - 1;
+    }
     _tab = TabController(
-      length: 3,
+      length: _visible.length,
       vsync: this,
-      initialIndex: widget.initialTab,
+      initialIndex: initIdx,
     );
+    _selected = initIdx;
+    _chipKeys.addAll(List.generate(_visible.length, (_) => GlobalKey()));
+    _tab.addListener(_handleTabChanged);
+    // Reveal the initially selected chip after the first layout — deep links
+    // (initialTabKey) can start on a tab whose chip is off-screen.
+    WidgetsBinding.instance.addPostFrameCallback((_) => _revealSelectedChip());
   }
 
   @override
   void dispose() {
+    _tab.removeListener(_handleTabChanged);
     _tab.dispose();
+    _chipScroll.dispose();
     super.dispose();
+  }
+
+  // ── Mobile chip selector: tab sync + auto-reveal ────────────────────────
+  void _handleTabChanged() {
+    if (!mounted || _selected == _tab.index) return;
+    setState(() => _selected = _tab.index);
+    _revealSelectedChip();
+  }
+
+  void _selectTab(int i) {
+    if (_selected == i) return;
+    setState(() => _selected = i);
+    _tab.animateTo(i);
+  }
+
+  void _revealSelectedChip() {
+    if (_selected < 0 || _selected >= _chipKeys.length) return;
+    final key = _chipKeys[_selected];
+    if (key.currentContext == null) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final ctx = key.currentContext;
+      if (!mounted || ctx == null) return;
+      Scrollable.ensureVisible(
+        ctx,
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOutCubic,
+        alignment: 0.5,
+      );
+    });
+  }
+
+  IconData _tabIcon(String key) => switch (key) {
+    'categories' => Icons.category_rounded,
+    'units' => Icons.straighten_rounded,
+    'suppliers' => Icons.local_shipping_outlined,
+    'purchase_orders' => Icons.request_quote_outlined,
+    'purchases' => Icons.move_to_inbox_outlined,
+    'quotations' => Icons.description_outlined,
+    'stock_transfers' => Icons.sync_alt_rounded,
+    _ => Icons.people_alt_rounded,
+  };
+
+  String _tabLabel(String key, L l) => switch (key) {
+    'categories' => l.categoriesTab,
+    'units' => l.unitsTab,
+    'suppliers' => l.isSw ? 'Wasambazaji' : 'Suppliers',
+    'purchase_orders' => l.isSw ? 'Maagizo' : 'Orders',
+    'purchases' => l.isSw ? 'Manunuzi' : 'Purchases',
+    'quotations' => l.isSw ? 'Nukuu' : 'Quotes',
+    'stock_transfers' => l.isSw ? 'Uhamisho' : 'Transfers',
+    _ => l.staffTab,
+  };
+
+  // ── Mobile: premium horizontally scrollable chip selector ───────────────
+  Widget _buildMobileSelector() {
+    return TutorialTarget(
+      id: 'manage_tabs',
+      child: SizedBox(
+        height: 40,
+        child: ListView(
+          controller: _chipScroll,
+          scrollDirection: Axis.horizontal,
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          children: [
+            for (var i = 0; i < _visible.length; i++) ...[
+              if (i > 0) const SizedBox(width: 8),
+              KeyedSubtree(key: _chipKeys[i], child: _buildChip(i)),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildChip(int i) {
+    final selected = _selected == i;
+    final l = L.of(context);
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeOutCubic,
+      decoration: BoxDecoration(
+        gradient: selected
+            ? const LinearGradient(colors: AppColors.gradGreen)
+            : null,
+        color: selected ? null : Colors.white.withAlpha(24),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: selected
+              ? Colors.white.withAlpha(130)
+              : Colors.white.withAlpha(45),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: selected
+                ? AppColors.primaryLt.withAlpha(90)
+                : Colors.transparent,
+            blurRadius: selected ? 10 : 0,
+            offset: Offset(0, selected ? 3 : 0),
+          ),
+        ],
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(14),
+          onTap: () => _selectTab(i),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  _tabIcon(_visible[i]),
+                  size: 15,
+                  color: selected ? Colors.white : Colors.white.withAlpha(170),
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  _tabLabel(_visible[i], l),
+                  maxLines: 1,
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
+                    color: selected
+                        ? Colors.white
+                        : Colors.white.withAlpha(195),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     final l = L.of(context);
 
-    Widget buildTabBar({required bool onGradient}) => Container(
+    // ── Hatua 1: hakuna ruhusa yoyote → empty state (si crash) ──
+    if (_visible.isEmpty) {
+      return Scaffold(
+        backgroundColor: AppColors.bg,
+        body: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.lock_outline_rounded, size: 48, color: AppColors.textMuted),
+              const SizedBox(height: 12),
+              Text(
+                l.isSw ? 'Huna ruhusa ya sehemu hii' : 'You do not have permission for this section',
+                style: TextStyle(color: AppColors.textMuted),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    Widget buildTabBar({required bool onGradient}) => TutorialTarget(
+      id: 'manage_tabs',
+      child: Container(
       margin: const EdgeInsets.fromLTRB(16, 0, 16, 0),
       decoration: BoxDecoration(
         color: onGradient ? Colors.white.withAlpha(25) : AppColors.bg,
@@ -52,6 +258,7 @@ class _ManageScreenState extends State<ManageScreen>
       ),
       child: TabBar(
         controller: _tab,
+        isScrollable: _visible.length > 4,
         indicator: BoxDecoration(
           gradient: onGradient
               ? const LinearGradient(colors: [Colors.white, Colors.white])
@@ -62,37 +269,61 @@ class _ManageScreenState extends State<ManageScreen>
         indicatorPadding: const EdgeInsets.all(3),
         labelColor: onGradient ? AppColors.primary : Colors.white,
         unselectedLabelColor: onGradient ? Colors.white70 : AppColors.textMuted,
-        labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+        labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
+        labelPadding: const EdgeInsets.symmetric(horizontal: 4),
         tabs: [
-          Tab(
-            icon: const Icon(Icons.category_rounded, size: 16),
-            text: l.categoriesTab,
-          ),
-          Tab(
-            icon: const Icon(Icons.straighten_rounded, size: 16),
-            text: l.unitsTab,
-          ),
-          Tab(
-            icon: const Icon(Icons.people_alt_rounded, size: 16),
-            text: l.staffTab,
-          ),
+          for (final t in _visible)
+            if (t == 'categories')
+              Tab(
+                icon: const Icon(Icons.category_rounded, size: 16),
+                text: l.categoriesTab,
+              )
+            else if (t == 'units')
+              Tab(
+                icon: const Icon(Icons.straighten_rounded, size: 16),
+                text: l.unitsTab,
+              )
+            else if (t == 'suppliers')
+              Tab(
+                icon: const Icon(Icons.local_shipping_outlined, size: 16),
+                text: l.isSw ? 'Wasambazaji' : 'Suppliers',
+              )
+            else if (t == 'purchase_orders')
+              Tab(
+                icon: const Icon(Icons.request_quote_outlined, size: 16),
+                text: l.isSw ? 'Maagizo' : 'Orders',
+              )
+            else if (t == 'purchases')
+              Tab(
+                icon: const Icon(Icons.move_to_inbox_outlined, size: 16),
+                text: l.isSw ? 'Manunuzi' : 'Purchases',
+              )
+            else if (t == 'quotations')
+              Tab(
+                icon: const Icon(Icons.description_outlined, size: 16),
+                text: l.isSw ? 'Nukuu' : 'Quotes',
+              )
+            else if (t == 'stock_transfers')
+              Tab(
+                icon: const Icon(Icons.sync_alt_rounded, size: 16),
+                text: l.isSw ? 'Uhamisho' : 'Transfers',
+              )
+            else
+              Tab(
+                icon: const Icon(Icons.people_alt_rounded, size: 16),
+                text: l.staffTab,
+              ),
         ],
       ),
+    ),
     );
     final tabBar = buildTabBar(onGradient: false);
-
-    final themePanel = _ThemePanel();
 
     if (widget.desktop) {
       return Column(
         children: [
           Container(
-            padding: const EdgeInsets.fromLTRB(24, 18, 24, 8),
-            color: Colors.transparent,
-            child: themePanel,
-          ),
-          Container(
-            padding: const EdgeInsets.fromLTRB(24, 0, 24, 14),
+            padding: const EdgeInsets.fromLTRB(24, 18, 24, 14),
             color: Colors.transparent,
             child: tabBar,
           ),
@@ -100,9 +331,23 @@ class _ManageScreenState extends State<ManageScreen>
             child: TabBarView(
               controller: _tab,
               children: [
-                _CategoryTab(desktop: true),
-                _UnitTab(desktop: true),
-                _StaffTab(desktop: true),
+                for (final t in _visible)
+                  if (t == 'categories')
+                    _CategoryTab(desktop: true)
+                  else if (t == 'units')
+                    _UnitTab(desktop: true)
+                  else if (t == 'suppliers')
+                    const SuppliersScreen(desktop: true)
+                  else if (t == 'purchase_orders')
+                    const PurchaseOrdersScreen(desktop: true)
+                  else if (t == 'purchases')
+                    const PurchasesScreen(desktop: true)
+                  else if (t == 'quotations')
+                    const QuotationsScreen(desktop: true)
+                  else if (t == 'stock_transfers')
+                    const StockTransfersScreen(desktop: true)
+                  else
+                    _StaffTab(desktop: true),
               ],
             ),
           ),
@@ -124,57 +369,108 @@ class _ManageScreenState extends State<ManageScreen>
                   end: Alignment.bottomRight,
                 ),
                 borderRadius: BorderRadius.only(
-                  bottomLeft: Radius.circular(28),
-                  bottomRight: Radius.circular(28),
+                  bottomLeft: Radius.circular(30),
+                  bottomRight: Radius.circular(30),
                 ),
+                boxShadow: [
+                  BoxShadow(
+                    color: Color(0x4D000000),
+                    blurRadius: 16,
+                    offset: Offset(0, 8),
+                  ),
+                ],
               ),
               child: SafeArea(
                 bottom: false,
                 child: Padding(
-                  padding: const EdgeInsets.fromLTRB(8, 4, 20, 20),
+                  padding: const EdgeInsets.fromLTRB(8, 6, 8, 16),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Row(
                         children: [
-                          IconButton(
-                            onPressed: () => Navigator.of(context).maybePop(),
-                            icon: const Icon(
-                              Icons.arrow_back_rounded,
-                              color: Colors.white,
+                          if (Navigator.of(context).canPop())
+                            IconButton(
+                              onPressed: () => Navigator.of(context).maybePop(),
+                              icon: const Icon(
+                                Icons.arrow_back_rounded,
+                                color: Colors.white,
+                              ),
+                            )
+                          else
+                            const SizedBox(width: 48),
+                          Expanded(
+                            child: Text(
+                              l.manage,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 20,
+                                fontWeight: FontWeight.w800,
+                                height: 1.15,
+                              ),
                             ),
                           ),
-                          Text(
-                            l.manage,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 17,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
+                          const _CompactThemeButton(),
                         ],
                       ),
-                      const SizedBox(height: 14),
                       Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
-                        child: buildTabBar(onGradient: true),
+                        padding: const EdgeInsets.fromLTRB(8, 4, 8, 0),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              l.isSw
+                                  ? 'Dhibiti biashara yako'
+                                  : 'Manage your business',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 13.5,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            const SizedBox(height: 3),
+                            Text(
+                              l.isSw
+                                  ? 'Bidhaa, manunuzi, wasambazaji, wafanyakazi na zaidi'
+                                  : 'Products, purchases, suppliers, staff and more',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: Colors.white.withAlpha(190),
+                                fontSize: 11.5,
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
+                      const SizedBox(height: 12),
+                      _buildMobileSelector(),
                     ],
                   ),
                 ),
               ),
             ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 14, 16, 2),
-              child: themePanel,
-            ),
             Expanded(
               child: TabBarView(
                 controller: _tab,
                 children: [
-                  _CategoryTab(desktop: false),
-                  _UnitTab(desktop: false),
-                  _StaffTab(desktop: false),
+                  for (final t in _visible)
+                    if (t == 'categories')
+                      _CategoryTab(desktop: false)
+                    else if (t == 'units')
+                      _UnitTab(desktop: false)
+                    else if (t == 'suppliers')
+                      const SuppliersScreen(desktop: false)
+                    else if (t == 'purchase_orders')
+                      const PurchaseOrdersScreen(desktop: false)
+                    else if (t == 'purchases')
+                      const PurchasesScreen(desktop: false)
+                    else if (t == 'quotations')
+                      const QuotationsScreen(desktop: false)
+                    else if (t == 'stock_transfers')
+                      const StockTransfersScreen(desktop: false)
+                    else
+                      _StaffTab(desktop: false),
                 ],
               ),
             ),
@@ -186,172 +482,95 @@ class _ManageScreenState extends State<ManageScreen>
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Theme Panel — Mandhari / Appearance settings card
+// Compact theme toggle for Manage's mobile header — desktop already has the
+// global theme pill in its persistent top bar (angalia dashboard_screen.dart's
+// _ThemeToggleButton), hivyo hapa hatuhitaji zaidi ya kitufe kimoja kidogo:
+// tap inazungusha auto→usiku→mchana, long-press inafungua chaguo la moja kwa moja.
 // ─────────────────────────────────────────────────────────────────────────────
-class _ThemePanel extends StatelessWidget {
-  const _ThemePanel();
+class _CompactThemeButton extends StatelessWidget {
+  const _CompactThemeButton();
+
+  static const _order = ['auto', 'dark', 'light'];
+
+  void _cycle(BuildContext context) {
+    final tp = context.read<ThemeProvider>();
+    final next = _order[(_order.indexOf(tp.preference) + 1) % _order.length];
+    tp.setPreference(next);
+  }
+
+  void _showPicker(BuildContext context) {
+    final tp = context.read<ThemeProvider>();
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (_) => ChangeNotifierProvider.value(
+        value: tp,
+        child: const _ThemePickerSheet(),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     final theme = context.watch<ThemeProvider>();
     final isDark = theme.isDark;
-
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 300),
-      padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-      decoration: BoxDecoration(
-        color: AppColors.bgCard,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.border),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withAlpha(isDark ? 40 : 15),
-            blurRadius: 12,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Row(
-        children: [
-          // Animated icon
-          AnimatedSwitcher(
-            duration: const Duration(milliseconds: 350),
-            transitionBuilder: (child, anim) => ScaleTransition(
-              scale: CurvedAnimation(parent: anim, curve: Curves.elasticOut),
-              child: FadeTransition(opacity: anim, child: child),
-            ),
-            child: Container(
-              key: ValueKey(isDark),
-              padding: const EdgeInsets.all(9),
-              decoration: BoxDecoration(
-                color: isDark
-                    ? AppColors.primary.withAlpha(45)
-                    : AppColors.accentDk.withAlpha(25),
-                borderRadius: BorderRadius.circular(11),
-              ),
-              child: Icon(
-                isDark ? Icons.dark_mode_rounded : Icons.light_mode_rounded,
-                color: isDark ? AppColors.primaryLt : AppColors.accentDk,
-                size: 20,
-              ),
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Mandhari',
-                  style: TextStyle(
-                    color: AppColors.textWhite,
-                    fontWeight: FontWeight.w700,
-                    fontSize: 13,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 250),
-                  child: Text(
-                    key: ValueKey(theme.preference + (isDark ? 'd' : 'l')),
-                    theme.preference == 'auto'
-                        ? (isDark
-                              ? 'Kiotomatiki • Usiku sasa'
-                              : 'Kiotomatiki • Mchana sasa')
-                        : theme.preference == 'dark'
-                        ? 'Usiku daima'
-                        : 'Mchana daima',
-                    style: TextStyle(color: AppColors.textMuted, fontSize: 11),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 10),
-          // 3 option chips
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _ThemeChip(
-                pref: 'auto',
-                icon: Icons.schedule_rounded,
-                label: 'Auto',
-              ),
-              const SizedBox(width: 6),
-              _ThemeChip(
-                pref: 'dark',
-                icon: Icons.dark_mode_rounded,
-                label: 'Usiku',
-              ),
-              const SizedBox(width: 6),
-              _ThemeChip(
-                pref: 'light',
-                icon: Icons.light_mode_rounded,
-                label: 'Mchana',
-              ),
-            ],
-          ),
-        ],
-      ),
+    final icon = switch (theme.preference) {
+      'dark' => Icons.dark_mode_rounded,
+      'light' => Icons.light_mode_rounded,
+      _ => isDark ? Icons.nights_stay_rounded : Icons.wb_sunny_rounded,
+    };
+    return IconButton(
+      onPressed: () => _cycle(context),
+      onLongPress: () => _showPicker(context),
+      icon: Icon(icon, color: Colors.white, size: 20),
+      tooltip: 'Mandhari',
     );
   }
 }
 
-class _ThemeChip extends StatelessWidget {
-  final String pref;
-  final IconData icon;
-  final String label;
-  const _ThemeChip({
-    required this.pref,
-    required this.icon,
-    required this.label,
-  });
+class _ThemePickerSheet extends StatelessWidget {
+  const _ThemePickerSheet();
 
   @override
   Widget build(BuildContext context) {
     final theme = context.watch<ThemeProvider>();
-    final isActive = theme.preference == pref;
+    Widget option(String pref, IconData icon, String label) {
+      final isActive = theme.preference == pref;
+      return ListTile(
+        leading: Icon(icon, color: isActive ? AppColors.primaryLt : AppColors.textMuted),
+        title: Text(label, style: TextStyle(color: AppColors.textWhite)),
+        trailing: isActive ? Icon(Icons.check_rounded, color: AppColors.primaryLt) : null,
+        onTap: () {
+          context.read<ThemeProvider>().setPreference(pref);
+          Navigator.pop(context);
+        },
+      );
+    }
 
-    return GestureDetector(
-      onTap: () => context.read<ThemeProvider>().setPreference(pref),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 220),
-        curve: Curves.easeOutCubic,
-        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
+    return SafeArea(
+      child: Container(
         decoration: BoxDecoration(
-          color: isActive ? AppColors.primary.withAlpha(210) : AppColors.bg,
-          borderRadius: BorderRadius.circular(9),
-          border: Border.all(
-            color: isActive ? AppColors.primaryLt : AppColors.border,
-            width: isActive ? 1.4 : 1.0,
-          ),
-          boxShadow: isActive
-              ? [
-                  BoxShadow(
-                    color: AppColors.primary.withAlpha(80),
-                    blurRadius: 8,
-                    offset: const Offset(0, 3),
-                  ),
-                ]
-              : [],
+          color: AppColors.bgCard,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
         ),
-        child: Row(
+        child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(
-              icon,
-              size: 13,
-              color: isActive ? Colors.white : AppColors.textMuted,
-            ),
-            const SizedBox(width: 4),
-            Text(
-              label,
-              style: TextStyle(
-                color: isActive ? Colors.white : AppColors.textMuted,
-                fontSize: 10,
-                fontWeight: isActive ? FontWeight.bold : FontWeight.normal,
+            const SizedBox(height: 10),
+            Container(width: 40, height: 4, decoration: BoxDecoration(
+                color: AppColors.border, borderRadius: BorderRadius.circular(2))),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 14, 20, 6),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text('Mandhari', style: TextStyle(
+                    color: AppColors.textWhite, fontSize: 16, fontWeight: FontWeight.w800)),
               ),
             ),
+            option('auto', Icons.schedule_rounded, 'Kiotomatiki'),
+            option('dark', Icons.dark_mode_rounded, 'Usiku daima'),
+            option('light', Icons.light_mode_rounded, 'Mchana daima'),
+            const SizedBox(height: 8),
           ],
         ),
       ),
@@ -734,7 +953,15 @@ class _CategoryTabState extends State<_CategoryTab> {
                     child: CircularProgressIndicator(color: AppColors.primary),
                   )
                 : filtered.isEmpty
-                ? _empty(l.noCats, Icons.category_outlined)
+                ? PremiumEmptyState(
+                    icon: Icons.category_outlined,
+                    title: l.isSw ? 'Hakuna kategoria bado' : 'No categories yet',
+                    subtitle: l.isSw
+                        ? 'Ongeza kategoria kupanga bidhaa zako kwa urahisi.'
+                        : 'Add categories to organize your products.',
+                    buttonLabel: l.addCategory,
+                    onButtonTap: () => _showAddEdit(),
+                  )
                 : ListView.separated(
                     padding: EdgeInsets.fromLTRB(
                       widget.desktop ? 24 : 12,
@@ -756,16 +983,6 @@ class _CategoryTabState extends State<_CategoryTab> {
     );
   }
 
-  Widget _empty(String msg, IconData icon) => Center(
-    child: Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(icon, color: AppColors.textMuted, size: 56),
-        const SizedBox(height: 12),
-        Text(msg, style: TextStyle(color: AppColors.textMuted, fontSize: 14)),
-      ],
-    ),
-  );
 }
 
 // Category Tile
@@ -1289,7 +1506,15 @@ class _UnitTabState extends State<_UnitTab> {
                     child: CircularProgressIndicator(color: AppColors.primary),
                   )
                 : filtered.isEmpty
-                ? _empty(l.noUnitsData, Icons.straighten_rounded)
+                ? PremiumEmptyState(
+                    icon: Icons.straighten_rounded,
+                    title: l.isSw ? 'Hakuna vipimo bado' : 'No units yet',
+                    subtitle: l.isSw
+                        ? 'Ongeza vipimo (kilo, lita, kipande) vinavyotumika kuuza bidhaa zako.'
+                        : 'Add the units (kg, litre, piece) your products are sold in.',
+                    buttonLabel: l.addUnit,
+                    onButtonTap: () => _showAddEdit(),
+                  )
                 : ListView.separated(
                     padding: EdgeInsets.fromLTRB(
                       widget.desktop ? 24 : 12,
@@ -1311,16 +1536,6 @@ class _UnitTabState extends State<_UnitTab> {
     );
   }
 
-  Widget _empty(String msg, IconData icon) => Center(
-    child: Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(icon, color: AppColors.textMuted, size: 56),
-        const SizedBox(height: 12),
-        Text(msg, style: TextStyle(color: AppColors.textMuted, fontSize: 14)),
-      ],
-    ),
-  );
 }
 
 // Unit Tile
@@ -1600,48 +1815,274 @@ class _StaffTabState extends State<_StaffTab> {
     }
   }
 
+  // ── Empty state: polished card + quick actions (existing actions only) ──
+  Widget _buildStaffEmptyState() {
+    final isSw = L.of(context).isSw;
+    return SingleChildScrollView(
+      padding: EdgeInsets.fromLTRB(
+        16,
+        18,
+        16,
+        widget.desktop ? 32 : MediaQuery.of(context).viewPadding.bottom + 96,
+      ),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 460),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // ── Main empty card ──
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.fromLTRB(24, 28, 24, 24),
+                decoration: BoxDecoration(
+                  color: AppColors.bgCard,
+                  borderRadius: BorderRadius.circular(24),
+                  border: Border.all(color: AppColors.border),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withAlpha(20),
+                      blurRadius: 20,
+                      offset: const Offset(0, 8),
+                    ),
+                  ],
+                ),
+                child: Column(
+                  children: [
+                    Container(
+                      width: 84,
+                      height: 84,
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(
+                          colors: AppColors.gradPrimary,
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                        ),
+                        borderRadius: BorderRadius.circular(26),
+                        boxShadow: [
+                          BoxShadow(
+                            color: AppColors.primary.withAlpha(80),
+                            blurRadius: 16,
+                            offset: const Offset(0, 6),
+                          ),
+                        ],
+                      ),
+                      child: const Icon(
+                        Icons.groups_rounded,
+                        color: Colors.white,
+                        size: 42,
+                      ),
+                    ),
+                    const SizedBox(height: 18),
+                    Text(
+                      isSw ? 'Hakuna wafanyakazi bado' : 'No staff members yet',
+                      style: TextStyle(
+                        color: AppColors.textWhite,
+                        fontSize: 17,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      isSw
+                          ? 'Ongeza wafanyakazi na uwapangie majukumu kwenye biashara yako.'
+                          : 'Add staff and assign their roles within your business.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: AppColors.textMuted,
+                        fontSize: 13,
+                        height: 1.45,
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton.icon(
+                        onPressed: () => _showAddEdit(),
+                        icon: const Icon(
+                          Icons.add_rounded,
+                          size: 18,
+                          color: Colors.white,
+                        ),
+                        label: Text(
+                          isSw ? 'Ongeza Mfanyakazi' : 'Add Staff Member',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w700,
+                            fontSize: 14,
+                          ),
+                        ),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppColors.primary,
+                          padding: const EdgeInsets.symmetric(vertical: 13),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                          elevation: 0,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 24),
+              // ── Quick actions — only wired to functionality that exists ──
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  isSw ? 'Mambo unayoweza kufanya' : 'Things you can do',
+                  style: TextStyle(
+                    color: AppColors.textWhite,
+                    fontSize: 14.5,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 10),
+              _quickAction(
+                icon: Icons.person_add_alt_1_outlined,
+                title: isSw ? 'Ongeza mfanyakazi' : 'Add a staff member',
+                subtitle: isSw
+                    ? 'Sajili wafanyakazi wapya'
+                    : 'Register new staff',
+                onTap: () => _showAddEdit(),
+              ),
+              const SizedBox(height: 8),
+              // Hakuna skrini ya kuhariri ruhusa kwa pekee — kadi hii ni ya
+              // kuonyesha tu (non-interactive) kwa mujibu wa muundo.
+              _quickAction(
+                icon: Icons.admin_panel_settings_outlined,
+                title: isSw ? 'Pangia majukumu' : 'Assign roles',
+                subtitle: isSw
+                    ? 'Weka ruhusa za mfumo'
+                    : 'Set system permissions',
+              ),
+              const SizedBox(height: 8),
+              // Hakuna historia ya shughuli za wafanyakazi kwenye app —
+              // non-interactive (haujaundwa feature bandia).
+              _quickAction(
+                icon: Icons.analytics_outlined,
+                title: isSw ? 'Fuatilia shughuli' : 'Track activity',
+                subtitle: isSw
+                    ? 'Ona historia ya shughuli za wafanyakazi'
+                    : 'View staff activity history',
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _quickAction({
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    VoidCallback? onTap,
+  }) {
+    final interactive = onTap != null;
+    return Opacity(
+      opacity: interactive ? 1 : 0.55,
+      child: Container(
+        decoration: BoxDecoration(
+          color: AppColors.bgCard,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: AppColors.border),
+        ),
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(16),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+              child: Row(
+                children: [
+                  Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: AppColors.primaryLt.withAlpha(24),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: AppColors.primaryLt.withAlpha(60),
+                      ),
+                    ),
+                    child: Icon(icon, size: 20, color: AppColors.primaryLt),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          title,
+                          style: TextStyle(
+                            color: AppColors.textWhite,
+                            fontSize: 13.5,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          subtitle,
+                          style: TextStyle(
+                            color: AppColors.textMuted,
+                            fontSize: 11.5,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (interactive)
+                    Icon(
+                      Icons.arrow_forward_ios_rounded,
+                      size: 13,
+                      color: AppColors.textMuted,
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.transparent,
-      floatingActionButton: Padding(
-        padding: EdgeInsets.only(
-          bottom: widget.desktop
-              ? 0
-              : MediaQuery.of(context).viewPadding.bottom + 76,
-        ),
-        child: FloatingActionButton.extended(
-          onPressed: () => _showAddEdit(),
-          backgroundColor: AppColors.primary,
-          icon: const Icon(Icons.person_add_alt_1_rounded, color: Colors.white),
-          label: const Text(
-            'Ongeza Mfanyakazi',
-            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-          ),
-        ),
-      ),
+      floatingActionButton: (_loading || _staff.isEmpty)
+          ? null
+          : Padding(
+              padding: EdgeInsets.only(
+                bottom: widget.desktop
+                    ? 0
+                    : MediaQuery.of(context).viewPadding.bottom + 76,
+              ),
+              child: FloatingActionButton.extended(
+                onPressed: () => _showAddEdit(),
+                backgroundColor: AppColors.primary,
+                icon: const Icon(
+                  Icons.person_add_alt_1_rounded,
+                  color: Colors.white,
+                ),
+                label: const Text(
+                  'Ongeza Mfanyakazi',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ),
       body: _loading
           ? const Center(
               child: CircularProgressIndicator(color: AppColors.primary),
             )
           : _staff.isEmpty
-          ? Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    Icons.people_outline_rounded,
-                    color: AppColors.textMuted,
-                    size: 56,
-                  ),
-                  const SizedBox(height: 12),
-                  Text(
-                    'Hakuna wafanyakazi bado',
-                    style: TextStyle(color: AppColors.textMuted, fontSize: 14),
-                  ),
-                ],
-              ),
-            )
+          ? _buildStaffEmptyState()
           : ListView.separated(
               padding: EdgeInsets.fromLTRB(
                 widget.desktop ? 24 : 12,
@@ -1906,18 +2347,167 @@ class _StaffFormSheetState extends State<_StaffFormSheet> {
   bool _saving = false;
   bool _obscurePass = true;
 
+  // ── Ukaguzi wa upatikanaji wa username (live, huku mtumiaji anaandika) ──
+  Timer? _usernameDebounce;
+  bool _checkingUsername = false;
+  bool? _usernameAvailable; // null = bado hajaandika/haujaguswa
+  List<String> _usernameSuggestions = [];
+  int _usernameCheckSeq = 0;
+
   bool get _isEdit => widget.staff != null;
 
   @override
+  void initState() {
+    super.initState();
+    if (!_isEdit) _usernameCtrl.addListener(_onUsernameChanged);
+  }
+
+  @override
   void dispose() {
+    _usernameDebounce?.cancel();
     _fullnameCtrl.dispose();
     _usernameCtrl.dispose();
     _passwordCtrl.dispose();
     super.dispose();
   }
 
+  void _onUsernameChanged() {
+    final value = _usernameCtrl.text.trim();
+    _usernameDebounce?.cancel();
+    if (value.isEmpty) {
+      setState(() {
+        _checkingUsername = false;
+        _usernameAvailable = null;
+        _usernameSuggestions = [];
+      });
+      return;
+    }
+    setState(() => _checkingUsername = true);
+    _usernameDebounce = Timer(const Duration(milliseconds: 500), () => _checkUsername(value));
+  }
+
+  Future<void> _checkUsername(String value) async {
+    final seq = ++_usernameCheckSeq;
+    final app = context.read<AppProvider>();
+    if (app.api == null) return;
+    try {
+      final res = await app.api!.manageStaff(
+        businessId: widget.business.businessId,
+        action: 'check_username',
+        username: value,
+        fullname: _fullnameCtrl.text.trim(),
+      );
+      // Puuza jibu kama mtumiaji ameshaandika kitu kingine tangu ombi hili lilipoanza.
+      if (!mounted || seq != _usernameCheckSeq) return;
+      setState(() {
+        _checkingUsername = false;
+        _usernameAvailable = res['available'] as bool? ?? true;
+        _usernameSuggestions = (res['suggestions'] as List? ?? [])
+            .map((e) => e.toString())
+            .toList();
+      });
+    } catch (_) {
+      if (!mounted || seq != _usernameCheckSeq) return;
+      setState(() => _checkingUsername = false);
+    }
+  }
+
+  void _applySuggestion(String s) {
+    _usernameCtrl.text = s;
+    _usernameCtrl.selection = TextSelection.collapsed(offset: s.length);
+    _onUsernameChanged();
+  }
+
+  Widget? _usernameStatusIcon() {
+    if (_checkingUsername) {
+      return const Padding(
+        padding: EdgeInsets.all(14),
+        child: SizedBox(
+          width: 16,
+          height: 16,
+          child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.primary),
+        ),
+      );
+    }
+    if (_usernameAvailable == null) return null;
+    return Icon(
+      _usernameAvailable! ? Icons.check_circle_rounded : Icons.cancel_rounded,
+      color: _usernameAvailable! ? AppColors.accent : AppColors.chartRed,
+      size: 20,
+    );
+  }
+
+  Widget _usernameStatusPanel() {
+    if (_checkingUsername) {
+      return Padding(
+        padding: const EdgeInsets.only(left: 4),
+        child: Text(
+          'Inaangalia upatikanaji...',
+          style: TextStyle(color: AppColors.textMuted, fontSize: 11.5),
+        ),
+      );
+    }
+    if (_usernameAvailable == true) {
+      return Padding(
+        padding: const EdgeInsets.only(left: 4),
+        child: Text(
+          'Jina linapatikana',
+          style: TextStyle(color: AppColors.accent, fontSize: 11.5, fontWeight: FontWeight.w600),
+        ),
+      );
+    }
+    // Tayari linatumika — onyesha ujumbe + mapendekezo (kama yapo).
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(left: 4),
+          child: Text(
+            'Jina hili tayari linatumika',
+            style: TextStyle(color: AppColors.chartRed, fontSize: 11.5, fontWeight: FontWeight.w600),
+          ),
+        ),
+        if (_usernameSuggestions.isNotEmpty) ...[
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 8,
+            runSpacing: 6,
+            children: [
+              for (final s in _usernameSuggestions)
+                InkWell(
+                  onTap: () => _applySuggestion(s),
+                  borderRadius: BorderRadius.circular(10),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: AppColors.primaryLt.withAlpha(24),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: AppColors.primaryLt.withAlpha(70)),
+                    ),
+                    child: Text(
+                      s,
+                      style: TextStyle(color: AppColors.primaryLt, fontSize: 12, fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ],
+      ],
+    );
+  }
+
   Future<void> _save() async {
     if (!(_formKey.currentState?.validate() ?? false)) return;
+    if (!_isEdit && _usernameAvailable == false) {
+      AppNotification.show(
+        context,
+        'Jina la mtumiaji tayari linatumika — chagua jingine',
+        AppColors.chartRed,
+        icon: Icons.error_rounded,
+      );
+      return;
+    }
     if (_branchId == null) {
       AppNotification.show(
         context,
@@ -1961,6 +2551,46 @@ class _StaffFormSheetState extends State<_StaffFormSheet> {
           icon: Icons.check_circle_rounded,
         );
         Navigator.pop(context, true);
+      } else if (res['reason'] == 'inactive_here' && res['user_id'] != null) {
+        // Mfanyakazi huyu tayari yupo kwenye duka hili lakini ameondolewa —
+        // mpe njia ya haraka ya kumrejesha badala ya ujumbe wa kufeli tu.
+        final reactivate = await showDialog<bool>(
+          context: context,
+          builder: (_) => AlertDialog(
+            backgroundColor: AppColors.bgCard,
+            title: Text('Mfanyakazi tayari yupo', style: TextStyle(color: AppColors.textWhite, fontSize: 16)),
+            content: Text(
+              res['message'] as String? ?? '',
+              style: TextStyle(color: AppColors.textMuted),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: Text('Ghairi', style: TextStyle(color: AppColors.textMuted)),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('Mrejeshe'),
+              ),
+            ],
+          ),
+        );
+        if (reactivate == true && mounted) {
+          final r2 = await app.api!.manageStaff(
+            businessId: widget.business.businessId,
+            action: 'reactivate',
+            requesterUserId: user.userId,
+            userId: res['user_id'] as int,
+          );
+          if (!mounted) return;
+          AppNotification.show(
+            context,
+            r2['message'] as String? ?? (r2['success'] == true ? '✅ Imefanikiwa' : 'Hitilafu'),
+            r2['success'] == true ? AppColors.accent : AppColors.chartRed,
+            icon: r2['success'] == true ? Icons.check_circle_rounded : Icons.error_rounded,
+          );
+          if (r2['success'] == true) Navigator.pop(context, true);
+        }
       } else {
         AppNotification.show(
           context,
@@ -2078,7 +2708,12 @@ class _StaffFormSheetState extends State<_StaffFormSheet> {
                         validator: (v) => (v == null || v.trim().isEmpty)
                             ? 'Username inahitajika'
                             : null,
+                        suffixIcon: _isEdit ? null : _usernameStatusIcon(),
                       ),
+                      if (!_isEdit && (_checkingUsername || _usernameAvailable != null)) ...[
+                        const SizedBox(height: 6),
+                        _usernameStatusPanel(),
+                      ],
                       if (!_isEdit) ...[
                         const SizedBox(height: 14),
                         TextFormField(
@@ -2279,6 +2914,7 @@ class _StaffFormSheetState extends State<_StaffFormSheet> {
     IconData icon, {
     bool enabled = true,
     String? Function(String?)? validator,
+    Widget? suffixIcon,
   }) {
     return TextFormField(
       controller: ctrl,
@@ -2289,6 +2925,7 @@ class _StaffFormSheetState extends State<_StaffFormSheet> {
         labelText: label,
         labelStyle: TextStyle(color: AppColors.textMuted, fontSize: 12),
         prefixIcon: Icon(icon, color: AppColors.textMuted, size: 17),
+        suffixIcon: suffixIcon,
         filled: true,
         fillColor: AppColors.bg,
         contentPadding: const EdgeInsets.symmetric(

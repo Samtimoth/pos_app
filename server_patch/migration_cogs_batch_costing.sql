@@ -1,0 +1,41 @@
+-- ═══════════════════════════════════════════════════════════════════════════
+-- COGS batch-level costing (FEFO-weighted cost_price) — kikwazo
+-- kilichoelezwa kwenye migration_pnl_returns_fix.sql sasa kimeshughulikiwa.
+-- Hakuna schema mpya — mabadiliko ya PHP (create_sale.php) tu.
+-- ═══════════════════════════════════════════════════════════════════════════
+
+-- Kabla: tbl_sale_items.cost_price ilihesabiwa kutoka
+-- tbl_product.purchase_price (bei MOJA ya SASA ya bidhaa), hata kama
+-- FEFO ilikuwa ikitoa stock kutoka batch zenye bei TOFAUTI za ununuzi.
+-- Hii ilifanya P&L kuwa "makadirio" pale bei za manunuzi zinapobadilika
+-- kati ya batch moja na nyingine (jambo linaloweza kutokea zaidi sasa
+-- kwa vile purchases.php/suppliers.php zinaruhusu bei tofauti kwa kila
+-- msambazaji/ununuzi).
+--
+-- Sasa: create_sale.php inahesabu batch(es) HALISI ambazo FEFO
+-- imezitumia kwa kila line-item (kabla ya kuandika tbl_sale_items), na
+-- kuweka `cost_price` kama WASTANI ULIOPIMWA (weighted average) wa bei
+-- za batch hizo — mfano: ukinunua 5 kwa TZS 1,000 na 5 kwa TZS 1,200,
+-- ukiuza 8, cost_price = ((5×1000)+(3×1200))/8 = TZS 1,075 kwa kila
+-- kipimo, si 1,200 (bei ya sasa ya tbl_product.purchase_price) wala
+-- 1,000 (bei ya kwanza).
+--
+-- Kama batch(es) hazitoshi kufunika kiasi kilichouzwa (mfano: stock
+-- iliongezwa kabla ya batch tracking kuanza, au batches zimeisha kwa
+-- makosa), sehemu isiyofunikwa inachanganywa (blended) na
+-- tbl_product.purchase_price ya sasa — hivyo hesabu bado inajumuisha
+-- kila kipimo kilichouzwa, haiachi pengo.
+--
+-- Athari: mauzo YOTE MAPYA kuanzia sasa yatakuwa na cost_price sahihi
+-- zaidi. Mauzo ya ZAMANI (kabla ya marekebisho haya) YANABAKI kama
+-- yalivyokuwa — tbl_sale_items.cost_price ni "picha ya wakati huo"
+-- (snapshot), haibadiliki nyuma. Hii ni sahihi kihasibu (usibadilishe
+-- rekodi za kihistoria), lakini inamaanisha P&L ya vipindi vya nyuma
+-- (kabla ya 2026-09-17) bado inatumia makadirio ya zamani.
+--
+-- Reversal: rudisha create_sale.php's cost_price computation kuwa
+-- `$ni['purchase_price'] * $ni['conversion_qty']` moja kwa moja (ondoa
+-- batch_cost_per_base_unit calculation na uweke deduct-stock block
+-- irudi mahali payo pa awali baada ya sale_items insert — angalia git
+-- history ya commit hii kwa muundo kamili wa awali). Hakuna data
+-- iliyoharibiwa inayohitaji kurudishwa — ni logic ya kuandika tu.

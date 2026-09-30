@@ -21,6 +21,81 @@ class User {
 
   bool get isSuperAdmin => globalRole.toLowerCase() == 'superadmin';
 
+  // ── Role helpers (Hatua 1) — viwango vya ruhusa kwenye UI ──
+  static const _managerPlus = {'owner', 'admin', 'superadmin', 'manager'};
+
+  String get _r => role.toLowerCase();
+
+  /// Kusoma data (mauzo, bidhaa, ripoti)
+  bool get canView => true;
+
+  /// Kuuza / kufanya mauzo mapya
+  bool get canSell =>
+      isSuperAdmin || _managerPlus.contains(_r) || _r == 'cashier' || _r == 'supporter';
+
+  /// Kuongeza/kuhariri bidhaa na stock
+  bool get canManageProducts =>
+      isSuperAdmin || _managerPlus.contains(_r) || _r == 'stockist';
+
+  /// Kufuta bidhaa
+  bool get canDeleteProducts => isSuperAdmin || _r == 'owner' || _r == 'admin';
+
+  /// Kuona bei ya kununua na faida
+  bool get canSeeCosts =>
+      isSuperAdmin || _managerPlus.contains(_r) || _r == 'accountant';
+
+  /// Kuhariri matumizi (expenses)
+  bool get canManageExpenses =>
+      isSuperAdmin || _managerPlus.contains(_r) || _r == 'accountant';
+
+  /// Kuandika matumizi mapya (expenses.add) — cashier anaruhusiwa kuandika
+  /// ingawa hawezi kuhariri/kufuta (angalia canManageExpenses)
+  bool get canAddExpense => canManageExpenses || _r == 'cashier';
+
+  /// Kusimamia wafanyakazi
+  bool get canManageStaff => isSuperAdmin || _r == 'owner' || _r == 'admin';
+
+  /// Kuhariri taarifa za biashara
+  bool get canEditBusiness => isSuperAdmin || _r == 'owner' || _r == 'admin';
+
+  /// Kuona faida na ripoti za P&L
+  bool get canSeeReports =>
+      isSuperAdmin || _managerPlus.contains(_r) || _r == 'accountant';
+
+  /// Kuvunja/kufuta mauzo (void) — Manager na wakuu pekee
+  bool get canVoidSales => isSuperAdmin || _managerPlus.contains(_r);
+
+  /// Kurudisha bidhaa (return/refund) — routine zaidi kuliko void, cashier anaweza
+  bool get canReturnSales =>
+      isSuperAdmin || _managerPlus.contains(_r) || _r == 'cashier';
+
+  /// Meneja/mmiliki — hawahitaji PIN ya idhini (wao ndio wanaoidhinisha wengine)
+  bool get isManagerTier => isSuperAdmin || _managerPlus.contains(_r);
+
+  /// Kuomba stock na kuipokea ikiwasili (angalia stock_requests.php)
+  bool get canRequestStock =>
+      isSuperAdmin || _managerPlus.contains(_r) || _r == 'stockist' || _r == 'cashier';
+
+  /// Kuidhinisha/kukataa maombi ya stock — si mtu aliyeomba mwenyewe
+  bool get canApproveStock =>
+      isSuperAdmin || _managerPlus.contains(_r) || _r == 'stockist';
+
+  /// Kurekodi hatua ya "Ununuzi" (msambazaji/bei/kumbukumbu) baada ya idhini —
+  /// server inalazimisha hili tena kupitia ruhusa ya `stock.purchase`
+  /// (inayotumia `stock.*` wildcard, sawa na canApproveStock).
+  bool get canConfirmPurchase =>
+      isSuperAdmin || _managerPlus.contains(_r) || _r == 'stockist';
+
+  /// Kupokea stock ikiwasili (batches) — jina jipya la wazi kwa canRequestStock
+  /// (server bado inatumia ruhusa ile ile `stock.request`, hakuna badiliko
+  /// la tabia — jina hili ni kwa uwazi wa UI pekee).
+  bool get canReceiveStock => canRequestStock;
+
+  /// Kuhariri maelezo ya bidhaa tu (jina/picha/kategoria) — si bei wala stock
+  /// (angalia canManageProducts kwa uhariri kamili, update_product.php
+  /// inalazimisha hili tena upande wa server bila kujali UI)
+  bool get canEditProductBasic => _r == 'cashier';
+
   factory User.fromJson(Map<String, dynamic> json, String serverUrl) => User(
         userId:     int.parse((json['user_id'] ?? 0).toString()),
         username:   json['username']    as String? ?? '',

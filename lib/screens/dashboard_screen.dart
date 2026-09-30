@@ -8,6 +8,19 @@ import '../models/business.dart';
 import '../models/sale.dart';
 import '../providers/app_provider.dart';
 import '../providers/cart_provider.dart';
+import '../services/app_update_service.dart';
+import '../services/crm_api.dart';
+import '../services/push_notification_service.dart';
+import '../services/sync_service.dart';
+import '../widgets/sync_status_bar.dart';
+import 'reports_screen.dart';
+import 'customers_screen.dart';
+import 'expense_form_sheet.dart';
+import 'more_screen.dart';
+import 'profile_screen.dart';
+import 'stock_ledger_screen.dart';
+import 'stock_requests_screen.dart';
+import 'return_requests_screen.dart';
 import '../providers/theme_provider.dart';
 import '../theme/app_theme.dart';
 import '../l10n/app_l10n.dart';
@@ -32,20 +45,23 @@ class DashboardScreen extends StatefulWidget {
 class _DashboardScreenState extends State<DashboardScreen>
     with SingleTickerProviderStateMixin {
   int _nav = 0;
-  int _manageInitialTab = 0;
+  final int _manageInitialTab = 0;
+  String? _manageInitialTabKey;
   Map<String, dynamic> _stats = {};
   List<dynamic> _salesChart = [];
+  List<dynamic> _expensesChart = [];
   List<Sale> _recentSales = [];
   bool _loading = true;
   String? _error;
   final _numFmt = NumberFormat('#,###', 'en_US');
   late AnimationController _animCtrl;
   late Animation<double> _fadeAnim;
-  late DateTime _now;
-  Timer? _clockTimer;
   bool _balanceVisible = true;
-  final int _productsRefreshKey = 0;
+  int _productsRefreshKey = 0;
   int? _lastTutorialNav;
+  List<Map<String, dynamic>> _notifications = [];
+  int _unreadNotifCount = 0;
+  int? _stockRequestFocusId;
 
   @override
   void initState() {
@@ -55,16 +71,94 @@ class _DashboardScreenState extends State<DashboardScreen>
       duration: const Duration(milliseconds: 600),
     );
     _fadeAnim = CurvedAnimation(parent: _animCtrl, curve: Curves.easeOut);
-    _now = DateTime.now();
-    _clockTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (mounted) setState(() => _now = DateTime.now());
+    _loadData();
+    _loadNotifications();
+    // Reload once queued offline work reaches the server (temp ids → real).
+    SyncService.instance.addChangeListener(_onSynced);
+    SyncService.instance.syncNow();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) AppUpdateService.checkAndPrompt(context);
     });
+    _initPushNotifications();
+  }
+
+  void _initPushNotifications() {
+    final app = context.read<AppProvider>();
+    final url = app.user?.serverUrl;
+    final userId = app.user?.userId;
+    if (url == null || userId == null) return;
+    PushNotificationService.init(
+      crm: CrmApi(url),
+      userId: userId,
+      businessId: app.selectedBusiness?.businessId,
+      onForegroundMessage: (message) {
+        if (mounted) PushNotificationService.showForegroundBanner(context, message);
+      },
+    );
+  }
+
+  Future<void> _loadNotifications() async {
+    final app = context.read<AppProvider>();
+    if (app.api == null || app.selectedBusiness == null) return;
+    try {
+      final res = await app.api!.listNotifications(app.selectedBusiness!.businessId);
+      if (!mounted) return;
+      if (res['success'] == true) {
+        setState(() {
+          _notifications = ((res['notifications'] as List?) ?? [])
+              .map((e) => Map<String, dynamic>.from(e as Map))
+              .toList();
+          _unreadNotifCount = (res['unread_count'] as num?)?.toInt() ?? 0;
+        });
+      }
+    } catch (_) {} // si muhimu kwa uendeshaji wa dashibodi kama itafeli
+  }
+
+  void _openNotifications() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _NotificationsSheet(
+        notifications: _notifications,
+        onMarkRead: (id) async {
+          final app = context.read<AppProvider>();
+          if (app.api == null || app.selectedBusiness == null) return;
+          try {
+            await app.api!.markNotificationRead(
+              businessId: app.selectedBusiness!.businessId,
+              notificationId: id,
+            );
+          } catch (_) {}
+          _loadNotifications();
+        },
+        onMarkAllRead: () async {
+          final app = context.read<AppProvider>();
+          if (app.api == null || app.selectedBusiness == null) return;
+          try {
+            await app.api!.markAllNotificationsRead(app.selectedBusiness!.businessId);
+          } catch (_) {}
+          _loadNotifications();
+        },
+        onOpenEntity: (type, id) {
+          Navigator.pop(context);
+          if (type == 'stock_request') {
+            setState(() { _nav = 9; _stockRequestFocusId = id; });
+          }
+        },
+      ),
+    );
+  }
+
+  void _onSynced() {
+    if (!mounted) return;
+    setState(() => _productsRefreshKey++);
     _loadData();
   }
 
   @override
   void dispose() {
-    _clockTimer?.cancel();
+    SyncService.instance.removeChangeListener(_onSynced);
     _animCtrl.dispose();
     super.dispose();
   }
@@ -96,6 +190,7 @@ class _DashboardScreenState extends State<DashboardScreen>
         setState(() {
           _stats = data;
           _salesChart = (data['weekly_sales'] as List?) ?? [];
+          _expensesChart = (data['weekly_expenses'] as List?) ?? [];
           _recentSales = salesRes
               .take(5)
               .map((e) => Sale.fromJson(e as Map<String, dynamic>))
@@ -128,6 +223,26 @@ class _DashboardScreenState extends State<DashboardScreen>
       ),
     );
     if (ok == true && mounted) {
+      final sync = SyncService.instance;
+      await sync.refreshCounts();
+      if (sync.hasWork && mounted) {
+        final force = await showDialog<bool>(
+          context: context,
+          builder: (_) => _FintechDialog(
+            icon: Icons.cloud_off_rounded,
+            iconColor: Colors.orange,
+            title: l.isSw ? 'Data haijatumwa' : 'Unsynced data',
+            body: l.isSw
+                ? 'Kuna ${sync.pending + sync.failed} operations (mauzo n.k.) ambazo bado hazijafika server. Zitabaki kwenye kifaa na kutumwa ukiingia tena ukiwa online. Endelea kutoka?'
+                : 'There are ${sync.pending + sync.failed} operations (sales etc.) not yet on the server. They stay on this device and sync next time you log in online. Log out anyway?',
+            confirmLabel: l.yes,
+            cancelLabel: l.no,
+            confirmColor: Colors.orange,
+          ),
+        );
+        if (force != true) return;
+      }
+      if (!mounted) return;
       await app.logout();
       if (!mounted) return;
       context.read<CartProvider>().clear();
@@ -158,88 +273,122 @@ class _DashboardScreenState extends State<DashboardScreen>
     });
   }
 
+  /// Coach-mark steps per tab. Each `targetId` names a [TutorialTarget]
+  /// somewhere on that screen, so the explanation points at the real thing.
   List<TutorialStep> _tutorialStepsForNav(int nav) {
     final l = L.of(context);
     switch (nav) {
       case 1:
-        return [
+        return const [
           TutorialStep(
-            icon: Icons.point_of_sale_rounded,
-            title: l.pos.split('—').first.trim(),
-            body:
-                'Tafuta bidhaa, ongeza kwenye kikapu, badili idadi na kamilisha malipo kwa haraka.',
+            icon: Icons.search_rounded,
+            title: 'Tafuta bidhaa',
+            body: 'Andika jina au barcode hapa. Gonga bidhaa ili iingie kwenye kikapu.',
+            targetId: 'pos_search',
           ),
-          const TutorialStep(
+          TutorialStep(
+            icon: Icons.qr_code_scanner_rounded,
+            title: 'Scan barcode',
+            body: 'Bonyeza hapa, elekeza kamera kwenye barcode — bidhaa inaingia kikapuni moja kwa moja. Scan nyingi mfululizo.',
+            targetId: 'pos_scan',
+          ),
+          TutorialStep(
+            icon: Icons.category_rounded,
+            title: 'Chuja kwa kategoria',
+            body: 'Gusa kategoria ili kuona bidhaa za aina hiyo tu.',
+            targetId: 'pos_categories',
+          ),
+          TutorialStep(
             icon: Icons.shopping_cart_checkout_rounded,
-            title: 'Kikapu cha mauzo',
-            body:
-                'Kagua jumla, punguzo na bidhaa kabla ya kutuma mauzo kwenda kwenye server.',
+            title: 'Kikapu na malipo',
+            body: 'Ukiongeza bidhaa, kitufe cha kikapu kinatokea chini kulia. Bonyeza kukamilisha mauzo, chagua aina ya malipo na upate risiti.',
+            targetId: 'pos_hero',
           ),
         ];
       case 2:
-        return [
+        return const [
+          TutorialStep(
+            icon: Icons.insights_rounded,
+            title: 'Muhtasari wa mauzo',
+            body: 'Mapato, madeni na mauzo yanayosubiri kwa mauzo unayoyaona chini.',
+            targetId: 'sales_summary',
+          ),
+          TutorialStep(
+            icon: Icons.filter_alt_rounded,
+            title: 'Tafuta na chuja',
+            body: 'Tafuta kwa jina la mteja au namba ya risiti, chuja kwa hali ya malipo au tarehe.',
+            targetId: 'sales_toolbar',
+          ),
           TutorialStep(
             icon: Icons.receipt_long_rounded,
-            title: l.sales,
-            body:
-                'Hapa unaona historia ya mauzo, risiti na taarifa za kila transaction.',
-          ),
-          const TutorialStep(
-            icon: Icons.refresh_rounded,
-            title: 'Refresh taarifa',
-            body:
-                'Vuta chini au tumia refresh kupata mauzo mapya kutoka kwenye server.',
+            title: 'Fungua muamala',
+            body: 'Gusa mauzo yoyote kuona bidhaa, kurekodi malipo ya deni, kuchapisha risiti au kufuta.',
+            targetId: 'sales_list',
           ),
         ];
       case 3:
-        return [
+        return const [
+          TutorialStep(
+            icon: Icons.add_box_rounded,
+            title: 'Ongeza bidhaa',
+            body: 'Bonyeza hapa kuongeza bidhaa mpya — jina, bei, stock, picha na barcode (scan au andika).',
+            targetId: 'products_add',
+          ),
+          TutorialStep(
+            icon: Icons.search_rounded,
+            title: 'Tafuta bidhaa',
+            body: 'Tafuta kwa jina au barcode, chuja kwa kategoria au stock ndogo.',
+            targetId: 'products_search',
+          ),
           TutorialStep(
             icon: Icons.inventory_2_rounded,
-            title: l.products,
-            body:
-                'Simamia bidhaa, bei, stock, batch na barcode kwa kila tawi la biashara.',
-          ),
-          const TutorialStep(
-            icon: Icons.add_box_rounded,
-            title: 'Ongeza stock',
-            body:
-                'Tumia vitufe vya kuongeza bidhaa au batch ili stock yako ibaki sahihi.',
+            title: 'Simamia stock',
+            body: 'Gusa bidhaa kuona maelezo, kuongeza stock (batch), vipimo vya kuuzia au kuhariri.',
+            targetId: 'products_list',
           ),
         ];
       case 4:
-        return [
+        return const [
           TutorialStep(
             icon: Icons.tune_rounded,
-            title: l.manage,
-            body:
-                'Hapa unasimamia wafanyakazi, settings, matawi na taarifa za biashara.',
+            title: 'Simamia biashara',
+            body: 'Tabs hizi zinakupeleka kwenye wafanyakazi, kategoria, vipimo, taarifa za duka na risiti.',
+            targetId: 'manage_tabs',
           ),
-          const TutorialStep(
+          TutorialStep(
             icon: Icons.group_rounded,
-            title: 'Ruhusa za wafanyakazi',
-            body:
-                'Angalia roles za wafanyakazi ili kila mtu afanye kazi zinazomfaa.',
+            title: 'Wafanyakazi na ruhusa',
+            body: 'Ongeza wafanyakazi na uwape roles (cashier, manager…) ili kila mtu aone kinachomhusu tu.',
+            targetId: 'manage_tabs',
           ),
         ];
+      case 8:
+        return const []; // "Zaidi" (More) — orodha rahisi, hauitaji coach-mark yake
       default:
         return [
-          TutorialStep(
-            icon: Icons.dashboard_rounded,
-            title: l.dashboard,
-            body:
-                'Dashboard inaonyesha mauzo ya leo, madeni, bidhaa zilizoisha na mwenendo wa biashara.',
-          ),
           const TutorialStep(
-            icon: Icons.touch_app_rounded,
-            title: 'Vitufe vya haraka',
-            body:
-                'Tumia shortcuts kwenda POS, sales, products au manage bila kupoteza muda.',
+            icon: Icons.person_rounded,
+            title: 'Profile na biashara',
+            body: 'Gusa hapa kubadili biashara au tawi, na kuona akaunti yako.',
+            targetId: 'dash_avatar',
           ),
           const TutorialStep(
             icon: Icons.visibility_rounded,
-            title: 'Ficha au onyesha salio',
-            body:
-                'Unaweza kuficha namba kubwa ukiwa mbele ya mteja, kisha kuzionyesha tena unapohitaji.',
+            title: 'Ficha salio',
+            body: 'Ukiwa mbele ya mteja, gusa jicho hili kuficha mapato ya leo.',
+            targetId: 'dash_eye',
+          ),
+          TutorialStep(
+            icon: Icons.point_of_sale_rounded,
+            title: l.sellNow,
+            body: 'Njia ya haraka ya kuanza kuuza. Kitufe cha kijani cha chini kinafanya hivyo hivyo.',
+            targetId: 'dash_sell_now',
+          ),
+          const TutorialStep(
+            icon: Icons.add_shopping_cart_rounded,
+            title: 'Menyu ya chini',
+            body: 'POS katikati; Dashibodi, Bidhaa, Mauzo na Zaidi pembeni — "Zaidi" ina Simamia, Wateja, Ripoti na vitu vingine. Unaweza kubadili wakati wowote.',
+            targetId: 'nav_pos',
           ),
         ];
     }
@@ -265,6 +414,7 @@ class _DashboardScreenState extends State<DashboardScreen>
             child: Column(
               children: [
                 _buildDesktopTopBar(user, biz, app),
+                const SyncStatusBar(),
                 Expanded(
                   child: AnimatedSwitcher(
                     duration: const Duration(milliseconds: 250),
@@ -299,7 +449,7 @@ class _DashboardScreenState extends State<DashboardScreen>
       width: 255,
       decoration: BoxDecoration(
         gradient: LinearGradient(
-          colors: [Color(0xFF0A1628), Color(0xFF0D1F35)],
+          colors: [AppColors.bg, AppColors.bgCard],
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
         ),
@@ -402,34 +552,45 @@ class _DashboardScreenState extends State<DashboardScreen>
           ),
           const SizedBox(height: 8),
 
-          // Nav items
-          _sidebarItem(
-            0,
-            Icons.dashboard_outlined,
-            Icons.dashboard_rounded,
-            l.dashboard,
+          // Nav items — scrollable so the sidebar never overflows on short screens
+          Expanded(
+            child: SingleChildScrollView(
+              child: Column(
+                children: [
+                  _sidebarItem(
+                    0,
+                    Icons.dashboard_outlined,
+                    Icons.dashboard_rounded,
+                    l.dashboard,
+                  ),
+                  _sidebarItem(
+                    1,
+                    Icons.point_of_sale_outlined,
+                    Icons.point_of_sale_rounded,
+                    l.pos,
+                  ),
+                  _sidebarItem(
+                    2,
+                    Icons.receipt_long_outlined,
+                    Icons.receipt_long_rounded,
+                    l.sales,
+                  ),
+                  _sidebarItem(
+                    3,
+                    Icons.inventory_2_outlined,
+                    Icons.inventory_2_rounded,
+                    l.products,
+                  ),
+                  _sidebarItem(4, Icons.tune_outlined, Icons.tune_rounded, l.manage),
+                  _sidebarItem(5, Icons.insights_outlined, Icons.insights_rounded, 'Ripoti'),
+                  _sidebarItem(6, Icons.people_alt_outlined, Icons.people_alt_rounded, 'Wateja'),
+                  _sidebarItem(7, Icons.history_outlined, Icons.history_rounded, 'Historia ya Stock'),
+                ],
+              ),
+            ),
           ),
-          _sidebarItem(
-            1,
-            Icons.point_of_sale_outlined,
-            Icons.point_of_sale_rounded,
-            l.pos,
-          ),
-          _sidebarItem(
-            2,
-            Icons.receipt_long_outlined,
-            Icons.receipt_long_rounded,
-            l.sales,
-          ),
-          _sidebarItem(
-            3,
-            Icons.inventory_2_outlined,
-            Icons.inventory_2_rounded,
-            l.products,
-          ),
-          _sidebarItem(4, Icons.tune_outlined, Icons.tune_rounded, l.manage),
-
-          const Spacer(),
+          const SyncStatusPill(),
+          const SizedBox(width: 12),
           Container(height: 1, color: AppColors.border),
           const SizedBox(height: 4),
 
@@ -639,7 +800,7 @@ class _DashboardScreenState extends State<DashboardScreen>
   // ── Desktop Top Bar ───────────────────────────────────────────────
   Widget _buildDesktopTopBar(User user, Business? biz, AppProvider app) {
     final l = L.of(context);
-    final titles = [l.dashboard, l.pos, l.sales, l.products, l.manage];
+    final titles = [l.dashboard, l.pos, l.sales, l.products, l.manage, 'Ripoti', 'Wateja', 'Historia ya Stock', 'Zaidi'];
     return Container(
       height: 68,
       padding: const EdgeInsets.symmetric(horizontal: 28),
@@ -806,16 +967,29 @@ class _DashboardScreenState extends State<DashboardScreen>
     return Scaffold(
       backgroundColor: AppColors.bg,
       extendBody: true,
-      body: AnimatedSwitcher(
-        duration: const Duration(milliseconds: 280),
-        transitionBuilder: (child, anim) =>
-            FadeTransition(opacity: anim, child: child),
-        child: KeyedSubtree(
-          key: ValueKey('mobile_$_nav-$_productsRefreshKey'),
-          child: _nav == 0
-              ? _buildMobileDashFull(user, biz, app)
-              : _pageContent(desktop: false),
-        ),
+      body: Column(
+        children: [
+          const SyncStatusBar(safeTop: true),
+          Expanded(
+            // The bar already consumed the status-bar inset; don't let the
+            // page header pad for it a second time.
+            child: MediaQuery.removePadding(
+              context: context,
+              removeTop: SyncStatusBar.isVisible(context),
+              child: AnimatedSwitcher(
+                duration: const Duration(milliseconds: 280),
+                transitionBuilder: (child, anim) =>
+                    FadeTransition(opacity: anim, child: child),
+                child: KeyedSubtree(
+                  key: ValueKey('mobile_$_nav-$_productsRefreshKey'),
+                  child: _nav == 0
+                      ? _buildMobileDashFull(user, biz, app)
+                      : _pageContent(desktop: false),
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
       bottomNavigationBar: _buildFintechBottomNav(app),
     );
@@ -854,13 +1028,20 @@ class _DashboardScreenState extends State<DashboardScreen>
                 Icons.dashboard_rounded,
                 l.dashboard,
               ),
-              // Manage (center button handles POS, so this slot shows Manage)
-              _navItem(4, Icons.tune_outlined, Icons.tune_rounded, l.manage),
+              // Bidhaa
+              _navItem(
+                3,
+                Icons.inventory_2_outlined,
+                Icons.inventory_2_rounded,
+                l.products,
+              ),
               // Center: POS shortcut (prominent)
               Expanded(
                 child: GestureDetector(
                   onTap: () => setState(() => _nav = 1),
-                  child: Column(
+                  child: TutorialTarget(
+                    id: 'nav_pos',
+                    child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       AnimatedContainer(
@@ -889,6 +1070,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                         ),
                       ),
                     ],
+                  )
                   ),
                 ),
               ),
@@ -899,13 +1081,9 @@ class _DashboardScreenState extends State<DashboardScreen>
                 Icons.receipt_long_rounded,
                 l.sales,
               ),
-              // Bidhaa
-              _navItem(
-                3,
-                Icons.inventory_2_outlined,
-                Icons.inventory_2_rounded,
-                l.products,
-              ),
+              // Zaidi (More) — kila kitu kingine (Simamia, Manunuzi,
+              // Wafanyikazi, Wateja, Matumizi, Ripoti, Historia ya Stock...)
+              _navItem(8, Icons.grid_view_outlined, Icons.grid_view_rounded, 'Zaidi'),
             ],
           ),
         ),
@@ -918,7 +1096,9 @@ class _DashboardScreenState extends State<DashboardScreen>
     return Expanded(
       child: GestureDetector(
         onTap: () => setState(() => _nav = index),
-        child: AnimatedContainer(
+        child: TutorialTarget(
+          id: 'nav_$index',
+          child: AnimatedContainer(
           duration: const Duration(milliseconds: 200),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
@@ -939,6 +1119,7 @@ class _DashboardScreenState extends State<DashboardScreen>
               ),
             ],
           ),
+        )
         ),
       ),
     );
@@ -956,14 +1137,25 @@ class _DashboardScreenState extends State<DashboardScreen>
         // ── Subscription banner ─────────────────────────────────────
         SliverToBoxAdapter(child: _buildSubscriptionBanner(biz)),
 
-        // ── Quick actions ──────────────────────────────────────────
-        SliverToBoxAdapter(child: _buildMobileQuickActions(l)),
+        // ── Quick Access grid ────────────────────────────────────────
+        SliverToBoxAdapter(child: _buildQuickAccessGrid(l)),
 
         // ── KPI Cards ─────────────────────────────────────────────
         SliverToBoxAdapter(child: _buildMobileKpiRow(l)),
 
-        // ── Chart ─────────────────────────────────────────────────
+        // ── Charts: mauzo na matumizi ─────────────────────────────
         SliverToBoxAdapter(child: _buildMobileChart(l)),
+        SliverToBoxAdapter(
+          child: _buildMobileChart(
+            l,
+            title: l.isSw ? 'Matumizi ya Wiki' : 'Weekly Expenses',
+            data: _expensesChart,
+            icon: Icons.payments_rounded,
+            accentColor: AppColors.chartRed,
+            barColors: const [AppColors.chartRed, AppColors.chartOrange],
+            showLiveBadge: false,
+          ),
+        ),
 
         // ── Recent Sales ──────────────────────────────────────────
         SliverToBoxAdapter(child: _buildRecentSalesSection(l)),
@@ -976,9 +1168,9 @@ class _DashboardScreenState extends State<DashboardScreen>
 
   // ── Fintech Header (dark green, like the image) ────────────────
   Widget _buildFintechHeader(User user, Business? biz, AppProvider app, L l) {
-    final revenue = (_stats['today_revenue'] ?? 0.0).toDouble();
-    final count = (_stats['today_sales_count'] ?? 0) as int;
-    final change = (_stats['revenue_change_pct'] ?? 0.0).toDouble();
+    final revenue = double.tryParse('${_stats['today_revenue'] ?? 0}') ?? 0.0;
+    final count = int.tryParse('${_stats['today_sales_count'] ?? 0}') ?? 0;
+    final change = double.tryParse('${_stats['revenue_change_pct'] ?? 0}') ?? 0.0;
     final up = change >= 0;
 
     return Container(
@@ -1002,7 +1194,9 @@ class _DashboardScreenState extends State<DashboardScreen>
               // ── Top row: greeting + icons ──────────────────────────
               Row(
                 children: [
-                  GestureDetector(
+                  TutorialTarget(
+                    id: 'dash_avatar',
+                    child: GestureDetector(
                     onTap: () => Navigator.of(context).push(
                       MaterialPageRoute(
                         builder: (_) => const BusinessSelectScreen(
@@ -1024,6 +1218,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                         ),
                       ),
                     ),
+                  ),
                   ),
                   const SizedBox(width: 12),
                   Expanded(
@@ -1090,7 +1285,50 @@ class _DashboardScreenState extends State<DashboardScreen>
                   // Theme toggle
                   _ThemeToggleButton(onWhiteBackground: false),
                   const SizedBox(width: 10),
-                  // Notifications / refresh
+                  // Notification bell (low stock/expiring/loss/muhtasari)
+                  GestureDetector(
+                    onTap: _openNotifications,
+                    child: Container(
+                      width: 42,
+                      height: 42,
+                      decoration: BoxDecoration(
+                        color: Colors.white.withAlpha(25),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Stack(
+                        clipBehavior: Clip.none,
+                        alignment: Alignment.center,
+                        children: [
+                          const Icon(
+                            Icons.notifications_rounded,
+                            color: Colors.white,
+                            size: 22,
+                          ),
+                          if (_unreadNotifCount > 0)
+                            Positioned(
+                              top: 4,
+                              right: 6,
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                                constraints: const BoxConstraints(minWidth: 15),
+                                decoration: BoxDecoration(
+                                  color: AppColors.chartRed,
+                                  borderRadius: BorderRadius.circular(20),
+                                  border: Border.all(color: AppColors.primaryDk, width: 1.2),
+                                ),
+                                child: Text(
+                                  _unreadNotifCount > 9 ? '9+' : '$_unreadNotifCount',
+                                  textAlign: TextAlign.center,
+                                  style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold),
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  // Refresh
                   GestureDetector(
                     onTap: _loadData,
                     child: Container(
@@ -1118,16 +1356,15 @@ class _DashboardScreenState extends State<DashboardScreen>
                 ],
               ),
 
-              const SizedBox(height: 16),
+              const SizedBox(height: 12),
 
               _DashboardClockStrip(
-                now: _now,
                 businessName: biz?.businessName,
                 branchName: app.selectedBranch?.branchName,
                 isSw: l.isSw,
               ),
 
-              const SizedBox(height: 24),
+              const SizedBox(height: 14),
 
               // ── Balance / Revenue ──────────────────────────────────
               Text(
@@ -1168,7 +1405,9 @@ class _DashboardScreenState extends State<DashboardScreen>
                           ),
                   ),
                   const SizedBox(width: 10),
-                  GestureDetector(
+                  TutorialTarget(
+                    id: 'dash_eye',
+                    child: GestureDetector(
                     onTap: () =>
                         setState(() => _balanceVisible = !_balanceVisible),
                     child: Icon(
@@ -1178,6 +1417,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                       color: Colors.white54,
                       size: 22,
                     ),
+                  ),
                   ),
                 ],
               ),
@@ -1229,25 +1469,68 @@ class _DashboardScreenState extends State<DashboardScreen>
                 ],
               ),
 
-              const SizedBox(height: 24),
+              const SizedBox(height: 14),
+
+              // ── Pesa iliyobaki mkononi (mwezi huu): mauzo yaliyolipwa
+              // toa manunuzi+matumizi yaliyolipwa — angalia dashboard.php's
+              // cash_in_hand_month (muundo ule ule wa cashflow.php).
+              Builder(builder: (context) {
+                final cashInHand = (_stats['cash_in_hand_month'] as num?)?.toDouble() ?? 0.0;
+                final isNeg = cashInHand < 0;
+                return Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withAlpha(18),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.account_balance_wallet_rounded,
+                          color: isNeg ? Colors.redAccent : Colors.white70, size: 15),
+                      const SizedBox(width: 8),
+                      Text(
+                        l.isSw ? 'Pesa Mkononi (Mwezi Huu):' : 'Cash in Hand (This Month):',
+                        style: const TextStyle(color: Colors.white70, fontSize: 11.5),
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        'TZS ${_numFmt.format(cashInHand.abs())}${isNeg ? " (hasara)" : ""}',
+                        style: TextStyle(
+                          color: isNeg ? Colors.redAccent : Colors.white,
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              }),
+
+              const SizedBox(height: 20),
 
               // ── Action buttons (lime, like image) ──────────────────
               Row(
                 children: [
                   Expanded(
-                    child: _headerButton(
+                    child: TutorialTarget(
+                      id: 'dash_sell_now',
+                      child: _headerButton(
                       l.sellNow,
                       Icons.point_of_sale_rounded,
                       () => setState(() => _nav = 1),
                     ),
+                    ),
                   ),
                   const SizedBox(width: 14),
                   Expanded(
-                    child: _headerButton(
+                    child: TutorialTarget(
+                      id: 'dash_view_sales',
+                      child: _headerButton(
                       l.viewSales,
                       Icons.receipt_long_rounded,
                       () => setState(() => _nav = 2),
                       outlined: true,
+                    ),
                     ),
                   ),
                 ],
@@ -1610,6 +1893,15 @@ class _DashboardScreenState extends State<DashboardScreen>
   // Shared KPI item list (with navigation) used by both mobile and desktop rows.
   List<_KpiItem> _kpiItems(L l) => [
     _KpiItem(
+      'Ripoti & P&L',
+      'Faida',
+      Icons.insights_rounded,
+      AppColors.accent,
+      onTap: () => Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => const ReportsScreen()),
+      ),
+    ),
+    _KpiItem(
       l.kpiProducts,
       '${_stats['total_products'] ?? 0}',
       Icons.inventory_2_rounded,
@@ -1628,7 +1920,9 @@ class _DashboardScreenState extends State<DashboardScreen>
       '${_stats['unpaid_loans_count'] ?? 0}',
       Icons.receipt_long_rounded,
       AppColors.chartRed,
-      onTap: () => setState(() => _nav = 2),
+      onTap: () => Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => const CustomersScreen()),
+      ),
     ),
     _KpiItem(
       l.kpiStaff,
@@ -1636,7 +1930,7 @@ class _DashboardScreenState extends State<DashboardScreen>
       Icons.people_rounded,
       AppColors.chartPurple,
       onTap: () => setState(() {
-        _manageInitialTab = 2;
+        _manageInitialTabKey = 'staff';
         _nav = 4;
       }),
     ),
@@ -1653,6 +1947,169 @@ class _DashboardScreenState extends State<DashboardScreen>
       ),
     ),
   ];
+
+  // "Zaidi" (More) page contents — kila kitu kisichokaa moja kwa moja
+  // kwenye bottom nav ya simu (nafasi ni ya Dashibodi/Bidhaa/POS/Mauzo tu).
+  List<MoreListItem> _moreItems(L l) {
+    final user = context.read<AppProvider>().user;
+    return [
+    if (user?.canManageProducts == true || user?.canManageStaff == true)
+      MoreListItem(
+        icon: Icons.tune_rounded,
+        color: AppColors.primaryLt,
+        label: 'Simamia',
+        subtitle: 'Kategoria, vipimo, wasambazaji, maagizo, nukuu',
+        onTap: () => setState(() { _manageInitialTabKey = null; _nav = 4; }),
+      ),
+    if (user?.canVoidSales == true)
+      MoreListItem(
+        icon: Icons.assignment_return_rounded,
+        color: AppColors.chartOrange,
+        label: 'Maombi ya Kurudisha',
+        subtitle: 'Idhinisha marejesho ya bidhaa yaliyoombwa na wafanyikazi',
+        onTap: () => Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const ReturnRequestsScreen()),
+        ),
+      ),
+    if (user?.canManageProducts == true)
+      MoreListItem(
+        icon: Icons.move_to_inbox_rounded,
+        color: AppColors.chartOrange,
+        label: 'Manunuzi',
+        subtitle: 'Ununuzi wa stock kutoka kwa wasambazaji',
+        onTap: () => setState(() { _manageInitialTabKey = 'purchases'; _nav = 4; }),
+      ),
+    if (user?.canManageStaff == true)
+      MoreListItem(
+        icon: Icons.badge_rounded,
+        color: AppColors.chartPurple,
+        label: 'Wafanyikazi',
+        subtitle: 'Watumiaji na ruhusa zao',
+        onTap: () => setState(() { _manageInitialTabKey = 'staff'; _nav = 4; }),
+      ),
+    MoreListItem(
+      icon: Icons.people_alt_rounded,
+      color: AppColors.chartBlue,
+      label: 'Wateja',
+      onTap: () => setState(() => _nav = 6),
+    ),
+    if (user?.canRequestStock == true || user?.canApproveStock == true)
+      MoreListItem(
+        icon: Icons.add_shopping_cart_outlined,
+        color: AppColors.chartGreen,
+        label: 'Maombi ya Stock',
+        subtitle: 'Omba stock, idhinisha, pokea ikiwasili',
+        onTap: () => setState(() => _nav = 9),
+      ),
+    if (user?.canAddExpense == true)
+      MoreListItem(
+        icon: Icons.payments_rounded,
+        color: AppColors.chartRed,
+        label: 'Ongeza Matumizi',
+        subtitle: 'Kodi, umeme, usafiri...',
+        onTap: () => ExpenseFormSheet.show(context),
+      ),
+    MoreListItem(
+      icon: Icons.analytics_rounded,
+      color: AppColors.accent,
+      label: 'Ripoti',
+      subtitle: 'P&L, mauzo, mtiririko wa pesa',
+      onTap: () => setState(() => _nav = 5),
+    ),
+    MoreListItem(
+      icon: Icons.history_rounded,
+      color: AppColors.chartGray,
+      label: 'Historia ya Stock',
+      onTap: () => setState(() => _nav = 7),
+    ),
+    MoreListItem(
+      icon: Icons.person_outline_rounded,
+      color: AppColors.textMuted,
+      label: 'Wasifu Wangu',
+      onTap: () => Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => const ProfileScreen()),
+      ),
+    ),
+  ];
+  }
+
+  // ── Quick Access grid (mobile dashboard) — vitufe vya action, si
+  // takwimu (tofauti na _kpiItems, ambayo ni stat cards zenye thamani) ──
+  List<_KpiItem> _quickAccessItems(L l) {
+    final user = context.read<AppProvider>().user;
+    return [
+    _KpiItem('POS', '', Icons.point_of_sale_rounded, AppColors.accent,
+        onTap: () => setState(() => _nav = 1)),
+    _KpiItem('Bidhaa', '', Icons.inventory_2_rounded, AppColors.primaryLt,
+        onTap: () => setState(() => _nav = 3)),
+    if (user?.canManageProducts == true)
+      _KpiItem('Manunuzi', '', Icons.move_to_inbox_rounded, AppColors.chartOrange,
+          onTap: () => setState(() { _manageInitialTabKey = 'purchases'; _nav = 4; })),
+    _KpiItem('Wateja', '', Icons.people_alt_rounded, AppColors.chartBlue,
+        onTap: () => setState(() => _nav = 6)),
+    if (user?.canRequestStock == true || user?.canApproveStock == true)
+      _KpiItem('Maombi ya Stock', '', Icons.add_shopping_cart_outlined, AppColors.chartGreen,
+          onTap: () => setState(() => _nav = 9)),
+    if (user?.canManageStaff == true)
+      _KpiItem('Wafanyikazi', '', Icons.badge_rounded, AppColors.chartPurple,
+          onTap: () => setState(() { _manageInitialTabKey = 'staff'; _nav = 4; })),
+    if (user?.canAddExpense == true)
+      _KpiItem('Matumizi', '', Icons.payments_rounded, AppColors.chartRed,
+          onTap: () => ExpenseFormSheet.show(context)),
+    _KpiItem('Ripoti', '', Icons.analytics_rounded, AppColors.accentBright,
+        onTap: () => setState(() => _nav = 5)),
+    if (user?.canManageProducts == true || user?.canManageStaff == true)
+      _KpiItem('Simamia', '', Icons.tune_rounded, AppColors.chartGray,
+          onTap: () => setState(() { _manageInitialTabKey = null; _nav = 4; })),
+  ];
+  }
+
+  Widget _buildQuickAccessGrid(L l) {
+    final items = _quickAccessItems(l);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: AppColors.bgCard,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: AppColors.border, width: 0.5),
+        ),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('Ufikiaji wa Haraka', style: TextStyle(color: AppColors.textMuted, fontSize: 12, fontWeight: FontWeight.w700)),
+          const SizedBox(height: 12),
+          GridView.count(
+            crossAxisCount: 4,
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            mainAxisSpacing: 14,
+            crossAxisSpacing: 8,
+            childAspectRatio: 0.78,
+            children: items.asMap().entries.map((e) => StaggeredItem(
+              index: e.key,
+              delay: const Duration(milliseconds: 50),
+              child: _quickAccessTile(e.value),
+            )).toList(),
+          ),
+        ]),
+      ),
+    );
+  }
+
+  Widget _quickAccessTile(_KpiItem item) => InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: item.onTap,
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Container(
+            width: 48, height: 48,
+            decoration: BoxDecoration(color: item.color.withAlpha(24), borderRadius: BorderRadius.circular(14)),
+            child: Icon(item.icon, color: item.color, size: 22),
+          ),
+          const SizedBox(height: 6),
+          Text(item.label, textAlign: TextAlign.center, maxLines: 1, overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: AppColors.textLight, fontSize: 10.5, fontWeight: FontWeight.w600)),
+        ]),
+      );
 
   Widget _kpiCard(_KpiItem item, {bool compact = false}) {
     final card = Container(
@@ -1714,7 +2171,16 @@ class _DashboardScreenState extends State<DashboardScreen>
   }
 
   // ── Mobile Chart ─────────────────────────────────────────────────
-  Widget _buildMobileChart(L l) {
+  Widget _buildMobileChart(
+    L l, {
+    String? title,
+    List<dynamic>? data,
+    IconData icon = Icons.bar_chart_rounded,
+    Color accentColor = AppColors.primaryLt,
+    List<Color> barColors = const [AppColors.primaryMid, AppColors.accentDk],
+    bool showLiveBadge = true,
+  }) {
+    final chartData = data ?? _salesChart;
     return Container(
       margin: const EdgeInsets.fromLTRB(16, 8, 16, 8),
       padding: const EdgeInsets.fromLTRB(16, 18, 10, 10),
@@ -1731,18 +2197,14 @@ class _DashboardScreenState extends State<DashboardScreen>
               Container(
                 padding: const EdgeInsets.all(7),
                 decoration: BoxDecoration(
-                  color: AppColors.primaryLt.withAlpha(22),
+                  color: accentColor.withAlpha(22),
                   borderRadius: BorderRadius.circular(10),
                 ),
-                child: const Icon(
-                  Icons.bar_chart_rounded,
-                  color: AppColors.primaryLt,
-                  size: 18,
-                ),
+                child: Icon(icon, color: accentColor, size: 18),
               ),
               const SizedBox(width: 10),
               Text(
-                l.weeklyChart,
+                title ?? l.weeklyChart,
                 style: TextStyle(
                   color: AppColors.textWhite,
                   fontSize: 14,
@@ -1750,46 +2212,47 @@ class _DashboardScreenState extends State<DashboardScreen>
                 ),
               ),
               const Spacer(),
-              PulseWidget(
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 4,
-                  ),
-                  decoration: BoxDecoration(
-                    color: AppColors.primaryLt.withAlpha(25),
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: Text(
-                    l.live,
-                    style: const TextStyle(
-                      color: AppColors.primaryLt,
-                      fontSize: 9,
-                      fontWeight: FontWeight.bold,
+              if (showLiveBadge)
+                PulseWidget(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: accentColor.withAlpha(25),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text(
+                      l.live,
+                      style: TextStyle(
+                        color: accentColor,
+                        fontSize: 9,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                   ),
                 ),
-              ),
             ],
           ),
           const SizedBox(height: 16),
           SizedBox(
             height: 150,
             child: _loading
-                ? const Center(
+                ? Center(
                     child: CircularProgressIndicator(
-                      color: AppColors.primaryLt,
+                      color: accentColor,
                       strokeWidth: 2,
                     ),
                   )
-                : _salesChart.isEmpty
+                : chartData.isEmpty
                 ? Center(
                     child: Text(
                       l.noData,
                       style: TextStyle(color: AppColors.textMuted),
                     ),
                   )
-                : BarChart(_buildBarChartData()),
+                : BarChart(_buildBarChartData(chartData, barColors)),
           ),
         ],
       ),
@@ -2000,13 +2463,32 @@ class _DashboardScreenState extends State<DashboardScreen>
               context.read<AppProvider>().selectedBusiness,
             ),
             const SizedBox(height: 20),
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(flex: 4, child: _buildRevenueBanner(l)),
-                const SizedBox(width: 20),
-                Expanded(flex: 6, child: _buildChartCard(l, height: 200)),
-              ],
+            IntrinsicHeight(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Expanded(
+                    flex: 4,
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(22),
+                      onTap: () => setState(() => _nav = 5),
+                      child: _buildRevenueBanner(l),
+                    ),
+                  ),
+                  const SizedBox(width: 20),
+                  Expanded(flex: 6, child: _buildChartCard(l, height: 200)),
+                ],
+              ),
+            ),
+            const SizedBox(height: 20),
+            _buildChartCard(
+              l,
+              height: 180,
+              title: l.isSw ? 'Matumizi ya Wiki' : 'Weekly Expenses',
+              data: _expensesChart,
+              icon: Icons.payments_rounded,
+              accentColor: AppColors.chartRed,
+              barColors: const [AppColors.chartRed, AppColors.chartOrange],
             ),
             const SizedBox(height: 20),
             _buildDesktopKpiRow(l),
@@ -2101,8 +2583,25 @@ class _DashboardScreenState extends State<DashboardScreen>
 
   Widget _buildRevenueBanner(L l) {
     final revenue = (_stats['today_revenue'] ?? 0.0).toDouble();
-    final count = (_stats['today_sales_count'] ?? 0) as int;
-    final change = (_stats['revenue_change_pct'] ?? 0.0).toDouble();
+    final count = int.tryParse('${_stats['today_sales_count'] ?? 0}') ?? 0;
+    final change = double.tryParse('${_stats['revenue_change_pct'] ?? 0}') ?? 0.0;
+    final totalRev = double.tryParse('${_stats['total_revenue'] ?? 0}') ?? 0.0;
+    final loansAmt = double.tryParse('${_stats['unpaid_loans_amount'] ?? 0}') ?? 0.0;
+    final loansCnt = int.tryParse('${_stats['unpaid_loans_count'] ?? 0}') ?? 0;
+    final fmt = NumberFormat('#,###', 'en_US');
+    Widget miniRow(IconData icon, String label, String value, {Color? color}) => Padding(
+          padding: const EdgeInsets.only(top: 8),
+          child: Row(children: [
+            Icon(icon, size: 15, color: Colors.white70),
+            const SizedBox(width: 8),
+            Expanded(child: Text(label, style: const TextStyle(color: Colors.white70, fontSize: 12))),
+            if (value.isEmpty)
+              const Icon(Icons.chevron_right_rounded, size: 18, color: Colors.white70)
+            else
+              Text(value,
+                  style: TextStyle(color: color ?? Colors.white, fontSize: 13, fontWeight: FontWeight.w800)),
+          ]),
+        );
     final up = change >= 0;
     return GradientCard(
       colors: AppColors.gradPrimary,
@@ -2180,12 +2679,29 @@ class _DashboardScreenState extends State<DashboardScreen>
             '$count ${l.kpiTodayCount}',
             style: TextStyle(color: Colors.white.withAlpha(160), fontSize: 12),
           ),
+          const Spacer(),
+          Divider(color: Colors.white.withAlpha(40), height: 22),
+          miniRow(Icons.stacked_line_chart_rounded, l.isSw ? 'Mauzo jumla' : 'Total sales',
+              'TZS ${fmt.format(totalRev)}'),
+          miniRow(Icons.receipt_long_rounded, l.isSw ? 'Madeni ($loansCnt)' : 'Debts ($loansCnt)',
+              'TZS ${fmt.format(loansAmt)}',
+              color: loansAmt > 0 ? AppColors.accentBright : Colors.white),
+          miniRow(Icons.insights_rounded, l.isSw ? 'Faida na ripoti' : 'Profit & reports', ''),
         ],
       ),
     );
   }
 
-  Widget _buildChartCard(L l, {required double height}) {
+  Widget _buildChartCard(
+    L l, {
+    required double height,
+    String? title,
+    List<dynamic>? data,
+    IconData icon = Icons.bar_chart_rounded,
+    Color accentColor = AppColors.primaryLt,
+    List<Color> barColors = const [AppColors.primaryMid, AppColors.accentDk],
+  }) {
+    final chartData = data ?? _salesChart;
     return Container(
       padding: const EdgeInsets.fromLTRB(18, 18, 12, 10),
       decoration: BoxDecoration(
@@ -2201,18 +2717,14 @@ class _DashboardScreenState extends State<DashboardScreen>
               Container(
                 padding: const EdgeInsets.all(7),
                 decoration: BoxDecoration(
-                  color: AppColors.primaryLt.withAlpha(22),
+                  color: accentColor.withAlpha(22),
                   borderRadius: BorderRadius.circular(10),
                 ),
-                child: const Icon(
-                  Icons.bar_chart_rounded,
-                  color: AppColors.primaryLt,
-                  size: 18,
-                ),
+                child: Icon(icon, color: accentColor, size: 18),
               ),
               const SizedBox(width: 10),
               Text(
-                l.weeklyChart,
+                title ?? l.weeklyChart,
                 style: TextStyle(
                   color: AppColors.textWhite,
                   fontSize: 15,
@@ -2224,25 +2736,29 @@ class _DashboardScreenState extends State<DashboardScreen>
           const SizedBox(height: 18),
           SizedBox(
             height: height,
-            child: _salesChart.isEmpty
+            child: chartData.isEmpty
                 ? Center(
                     child: Text(
                       l.noData,
                       style: TextStyle(color: AppColors.textMuted),
                     ),
                   )
-                : BarChart(_buildBarChartData()),
+                : BarChart(_buildBarChartData(chartData, barColors)),
           ),
         ],
       ),
     );
   }
 
-  BarChartData _buildBarChartData() {
+  BarChartData _buildBarChartData([
+    List<dynamic>? source,
+    List<Color> gradientColors = const [AppColors.primaryMid, AppColors.accentDk],
+  ]) {
+    final data = source ?? _salesChart;
     final spots = <BarChartGroupData>[];
     double maxY = 0;
-    for (int i = 0; i < _salesChart.length && i < 7; i++) {
-      final v = (_salesChart[i]['total'] ?? 0.0).toDouble();
+    for (int i = 0; i < data.length && i < 7; i++) {
+      final v = (data[i]['total'] ?? 0.0).toDouble();
       if (v > maxY) maxY = v;
       spots.add(
         BarChartGroupData(
@@ -2250,8 +2766,8 @@ class _DashboardScreenState extends State<DashboardScreen>
           barRods: [
             BarChartRodData(
               toY: v,
-              gradient: const LinearGradient(
-                colors: [AppColors.primaryMid, AppColors.accentDk],
+              gradient: LinearGradient(
+                colors: gradientColors,
                 begin: Alignment.bottomCenter,
                 end: Alignment.topCenter,
               ),
@@ -2264,7 +2780,7 @@ class _DashboardScreenState extends State<DashboardScreen>
         ),
       );
     }
-    final labels = _salesChart
+    final labels = data
         .map((d) => (d['day_label'] as String?) ?? '')
         .toList();
     return BarChartData(
@@ -2296,10 +2812,15 @@ class _DashboardScreenState extends State<DashboardScreen>
           sideTitles: SideTitles(
             showTitles: true,
             reservedSize: 52,
-            getTitlesWidget: (v, _) => Text(
-              _compact(v),
-              style: TextStyle(color: AppColors.textMuted, fontSize: 10),
-            ),
+            interval: maxY > 0 ? maxY / 4 : 25,
+            // fl_chart also draws the axis max; it lands on top of the last
+            // regular tick → skip it
+            getTitlesWidget: (v, meta) => v >= meta.max
+                ? const SizedBox.shrink()
+                : Text(
+                    _compact(v),
+                    style: TextStyle(color: AppColors.textMuted, fontSize: 10),
+                  ),
           ),
         ),
         topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
@@ -2568,7 +3089,17 @@ class _DashboardScreenState extends State<DashboardScreen>
           onBack: () => setState(() => _nav = 0),
         );
       case 4:
-        return ManageScreen(desktop: desktop, initialTab: _manageInitialTab);
+        return ManageScreen(desktop: desktop, initialTab: _manageInitialTab, initialTabKey: _manageInitialTabKey);
+      case 5:
+        return ReportsScreen(desktop: desktop);
+      case 6:
+        return CustomersScreen(desktop: desktop);
+      case 7:
+        return StockLedgerScreen(desktop: desktop);
+      case 8:
+        return MoreScreen(desktop: desktop, items: _moreItems(l));
+      case 9:
+        return StockRequestsScreen(desktop: desktop, initialRequestId: _stockRequestFocusId);
       default:
         return desktop ? _buildDesktopDash(l) : _buildDashContent(l);
     }
@@ -2593,6 +3124,16 @@ class _DashboardScreenState extends State<DashboardScreen>
           _buildMobileKpiRow(l),
           const SizedBox(height: 8),
           _buildMobileChart(l),
+          const SizedBox(height: 8),
+          _buildMobileChart(
+            l,
+            title: l.isSw ? 'Matumizi ya Wiki' : 'Weekly Expenses',
+            data: _expensesChart,
+            icon: Icons.payments_rounded,
+            accentColor: AppColors.chartRed,
+            barColors: const [AppColors.chartRed, AppColors.chartOrange],
+            showLiveBadge: false,
+          ),
           const SizedBox(height: 8),
           _buildRecentSalesSection(l),
         ],
@@ -2679,101 +3220,86 @@ class _QA {
   const _QA(this.icon, this.label, this.color, this.onTap);
 }
 
-class _DashboardClockStrip extends StatelessWidget {
-  final DateTime now;
+/// One slim line: "Duka • Tawi   ·   Jtt, 14 Sep · 12:24".
+/// Keeps its own minute timer so the rest of the dashboard never rebuilds
+/// just because the clock moved.
+class _DashboardClockStrip extends StatefulWidget {
   final String? businessName;
   final String? branchName;
   final bool isSw;
 
   const _DashboardClockStrip({
-    required this.now,
     required this.businessName,
     required this.branchName,
     required this.isSw,
   });
 
   @override
+  State<_DashboardClockStrip> createState() => _DashboardClockStripState();
+}
+
+class _DashboardClockStripState extends State<_DashboardClockStrip> {
+  late DateTime _now;
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _now = DateTime.now();
+    _schedule();
+  }
+
+  // Fire on the next full minute, then every minute.
+  void _schedule() {
+    final next = DateTime(_now.year, _now.month, _now.day, _now.hour, _now.minute + 1);
+    _timer = Timer(next.difference(DateTime.now()), () {
+      if (!mounted) return;
+      setState(() => _now = DateTime.now());
+      _schedule();
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final time = DateFormat('HH:mm:ss').format(now);
-    final date = DateFormat('EEE, dd MMM yyyy').format(now);
+    final time = DateFormat('HH:mm').format(_now);
+    final date = DateFormat('EEE, dd MMM').format(_now);
     final location = [
-      if ((businessName ?? '').isNotEmpty) businessName!,
-      if ((branchName ?? '').isNotEmpty) branchName!,
+      if ((widget.businessName ?? '').isNotEmpty) widget.businessName!,
+      if ((widget.branchName ?? '').isNotEmpty) widget.branchName!,
     ].join(' • ');
 
-    return AnimatedSwitcher(
-      duration: const Duration(milliseconds: 260),
-      switchInCurve: Curves.easeOutCubic,
-      switchOutCurve: Curves.easeInCubic,
-      child: Container(
-        key: ValueKey(time),
-        padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-        decoration: BoxDecoration(
-          color: Colors.white.withAlpha(18),
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: Colors.white.withAlpha(36)),
+    return Row(
+      children: [
+        const Icon(Icons.storefront_rounded, color: Colors.white60, size: 14),
+        const SizedBox(width: 6),
+        Expanded(
+          child: Text(
+            location,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: Colors.white70,
+              fontWeight: FontWeight.w600,
+              fontSize: 12,
+            ),
+          ),
         ),
-        child: Row(
-          children: [
-            Container(
-              width: 38,
-              height: 38,
-              decoration: BoxDecoration(
-                color: AppColors.accent.withAlpha(30),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: const Icon(
-                Icons.schedule_rounded,
-                color: AppColors.accentBright,
-                size: 20,
-              ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    isSw ? 'Saa ya biashara' : 'Business time',
-                    style: const TextStyle(color: Colors.white60, fontSize: 11),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    location.isEmpty ? date : location,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w700,
-                      fontSize: 12,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 8),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Text(
-                  time,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w900,
-                    fontSize: 17,
-                    fontFeatures: [FontFeature.tabularFigures()],
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  date,
-                  style: const TextStyle(color: Colors.white60, fontSize: 10),
-                ),
-              ],
-            ),
-          ],
+        const SizedBox(width: 8),
+        Text(
+          '$date · $time',
+          style: const TextStyle(
+            color: Colors.white60,
+            fontSize: 11,
+            fontFeatures: [FontFeature.tabularFigures()],
+          ),
         ),
-      ),
+      ],
     );
   }
 }
@@ -3129,4 +3655,109 @@ class _FintechDialog extends StatelessWidget {
       ),
     ],
   );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Notifications sheet — low_stock / expiring / loss / daily_summary, kutoka
+// check_alerts.php (cron ya kila siku) na kusomwa kupitia notifications.php.
+// ─────────────────────────────────────────────────────────────────────────────
+class _NotificationsSheet extends StatelessWidget {
+  final List<Map<String, dynamic>> notifications;
+  final ValueChanged<int> onMarkRead;
+  final VoidCallback onMarkAllRead;
+  final void Function(String entityType, int entityId)? onOpenEntity;
+  const _NotificationsSheet({
+    required this.notifications,
+    required this.onMarkRead,
+    required this.onMarkAllRead,
+    this.onOpenEntity,
+  });
+
+  (IconData, Color) _iconFor(String type) => switch (type) {
+        'low_stock' => (Icons.inventory_2_rounded, AppColors.chartOrange),
+        'expiring' => (Icons.event_busy_rounded, AppColors.chartRed),
+        'loss' => (Icons.trending_down_rounded, AppColors.chartRed),
+        'daily_summary' => (Icons.summarize_rounded, AppColors.primaryLt),
+        'stock_request' => (Icons.add_shopping_cart_outlined, AppColors.chartGreen),
+        _ => (Icons.notifications_rounded, AppColors.textMuted),
+      };
+
+  @override
+  Widget build(BuildContext context) {
+    final mq = MediaQuery.of(context);
+    return Container(
+      constraints: BoxConstraints(maxHeight: mq.size.height * 0.85),
+      decoration: BoxDecoration(
+        color: AppColors.bgCard,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const SizedBox(height: 10),
+          Container(width: 40, height: 4, decoration: BoxDecoration(
+              color: AppColors.border, borderRadius: BorderRadius.circular(2))),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 14, 12, 6),
+            child: Row(children: [
+              Expanded(
+                child: Text('Arifa', style: TextStyle(
+                    color: AppColors.textWhite, fontSize: 16, fontWeight: FontWeight.w800)),
+              ),
+              if (notifications.any((n) => n['is_read'] != true))
+                TextButton(
+                  onPressed: onMarkAllRead,
+                  child: const Text('Zimewa zote', style: TextStyle(fontSize: 12)),
+                ),
+              IconButton(onPressed: () => Navigator.pop(context), icon: Icon(Icons.close_rounded, color: AppColors.textMuted)),
+            ]),
+          ),
+          Divider(color: AppColors.border, height: 1),
+          Flexible(
+            child: notifications.isEmpty
+                ? Padding(
+                    padding: const EdgeInsets.all(40),
+                    child: Center(
+                      child: Text('Hakuna arifa bado', style: TextStyle(color: AppColors.textMuted)),
+                    ),
+                  )
+                : ListView.separated(
+                    shrinkWrap: true,
+                    padding: const EdgeInsets.symmetric(vertical: 6),
+                    itemCount: notifications.length,
+                    separatorBuilder: (_, _) => Divider(color: AppColors.border, height: 1),
+                    itemBuilder: (_, i) {
+                      final n = notifications[i];
+                      final isRead = n['is_read'] == true;
+                      final (icon, color) = _iconFor('${n['type']}');
+                      final entityType = n['entity_type'] as String?;
+                      final entityId = n['entity_id'] as int?;
+                      final canOpen = entityType != null && entityId != null && onOpenEntity != null;
+                      return ListTile(
+                        onTap: (!isRead || canOpen) ? () {
+                          if (!isRead) onMarkRead(n['notification_id'] as int);
+                          if (canOpen) onOpenEntity!(entityType, entityId);
+                        } : null,
+                        leading: Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(color: color.withAlpha(30), borderRadius: BorderRadius.circular(10)),
+                          child: Icon(icon, color: color, size: 18),
+                        ),
+                        title: Text('${n['title']}', style: TextStyle(
+                            color: AppColors.textWhite, fontSize: 13,
+                            fontWeight: isRead ? FontWeight.normal : FontWeight.bold)),
+                        subtitle: Text('${n['body']}', style: TextStyle(color: AppColors.textMuted, fontSize: 11.5)),
+                        trailing: isRead ? null : Container(
+                          width: 8, height: 8,
+                          decoration: BoxDecoration(color: AppColors.primaryLt, shape: BoxShape.circle),
+                        ),
+                      );
+                    },
+                  ),
+          ),
+          SizedBox(height: mq.padding.bottom + 8),
+        ],
+      ),
+    );
+  }
 }

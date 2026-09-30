@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:provider/provider.dart';
 import '../models/product.dart'; // exports ProductUnit
+import '../providers/app_provider.dart';
 import '../theme/app_theme.dart';
+import 'stock_ledger_screen.dart';
 import '../l10n/app_l10n.dart';
 import '../utils/cat_style.dart';
 import 'product_form_sheet.dart';
@@ -538,8 +541,28 @@ class ProductDetailSheet extends StatelessWidget {
     final l = L.of(context);
     return Padding(
       padding: EdgeInsets.fromLTRB(16, 4, 16, 24 + mq.padding.bottom),
-      child: SizedBox(
-        width: double.infinity,
+      child: Row(children: [
+        // Stock card + adjustments (ledger)
+        SizedBox(
+          height: 56,
+          child: OutlinedButton.icon(
+            onPressed: () {
+              Navigator.pop(context);
+              StockCardSheet.show(context, product, onChanged: onRefresh);
+            },
+            style: OutlinedButton.styleFrom(
+              foregroundColor: AppColors.chartOrange,
+              side: BorderSide(color: AppColors.chartOrange.withAlpha(140)),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              padding: const EdgeInsets.symmetric(horizontal: 14),
+            ),
+            icon: const Icon(Icons.history_rounded, size: 20),
+            label: Text(l.isSw ? 'Stock' : 'Stock',
+                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+          ),
+        ),
+        const SizedBox(width: 10),
+        Expanded(child: SizedBox(
         height: 56,
         child: ElevatedButton.icon(
           onPressed: () {
@@ -569,7 +592,8 @@ class ProductDetailSheet extends StatelessWidget {
                 fontSize: 16),
           ),
         ),
-      ),
+        )),
+      ]),
     );
   }
 
@@ -602,8 +626,10 @@ class ProductDetailSheet extends StatelessWidget {
               _heroArea(context),
             ])),
 
-            SliverToBoxAdapter(
-                child: StaggeredItem(index: 0, child: _priceCard(context))),
+            // Kadi ya bei ya kununua/faida — wanao ruhusa pekee (Hatua 1)
+            if (context.read<AppProvider>().user?.canSeeCosts ?? false)
+              SliverToBoxAdapter(
+                  child: StaggeredItem(index: 0, child: _priceCard(context))),
             SliverToBoxAdapter(
                 child: StaggeredItem(index: 1, child: _stockCard(context))),
             if (product.units.isNotEmpty)

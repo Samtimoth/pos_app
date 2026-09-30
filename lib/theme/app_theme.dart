@@ -17,7 +17,7 @@ class AppColors {
   static const chartPurple = Color(0xFF8B5CF6);
   static const chartOrange = Color(0xFFF97316);
   static const chartRed = Color(0xFFEF4444);
-  static const chartGray = Color(0xFF94A3B8);
+  static const chartGray = Color(0xFF93A69D);
   static const chartLime = Color(0xFFA3E635);
 
   // ── GRADIENTS — const ────────────────────────────────────────────────────
@@ -43,25 +43,25 @@ class AppColors {
   // ─────────────────────────────────────────────────────────────────────────
 
   // Dark palette private seeds (used in ThemeData const contexts)
-  static const _dBg = Color(0xFF0A1628);
-  static const _dBgCard = Color(0xFF132134);
-  static const _dBgDark = Color(0xFF060E1C);
-  static const _dBgInput = Color(0xFF0A1628);
-  static const _dBorder = Color(0xFF1E3A5F);
+  static const _dBg = Color(0xFF0C1512);      // deep green-black
+  static const _dBgCard = Color(0xFF15211C);  // card surface
+  static const _dBgDark = Color(0xFF070D0B);
+  static const _dBgInput = Color(0xFF0F1A16);
+  static const _dBorder = Color(0xFF243530);
   static const _dTxtW = Color(0xFFFFFFFF);
-  static const _dTxtM = Color(0xFF94A3B8);
-  static const _dTxtL = Color(0xFFCBD5E1);
+  static const _dTxtM = Color(0xFF93A69D);
+  static const _dTxtL = Color(0xFFCFDAD4);
   static const _dTxtG = Color(0xFF6EE7B7);
 
   // Light palette private seeds
-  static const _lBg = Color(0xFFF1F5F9);
+  static const _lBg = Color(0xFFF2F6F3);
   static const _lBgCard = Color(0xFFFFFFFF);
-  static const _lBgDark = Color(0xFFE2E8F0);
+  static const _lBgDark = Color(0xFFE3EAE6);
   static const _lBgInput = Color(0xFFFFFFFF);
-  static const _lBorder = Color(0xFFCBD5E1);
-  static const _lTxtW = Color(0xFF0F172A); // near-black text (replaces "white")
-  static const _lTxtM = Color(0xFF64748B);
-  static const _lTxtL = Color(0xFF475569);
+  static const _lBorder = Color(0xFFD3DDD7);
+  static const _lTxtW = Color(0xFF13201B); // near-black text (replaces "white")
+  static const _lTxtM = Color(0xFF64736C);
+  static const _lTxtL = Color(0xFF465751);
   static const _lTxtG = Color(0xFF047857);
 
   // ── Public surface fields — start as dark ────────────────────────────────

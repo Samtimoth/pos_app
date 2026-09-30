@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/user.dart';
 import '../providers/app_provider.dart';
-import '../services/api_service.dart';
+import '../services/offline_api_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/brand_logo.dart';
 import '../widgets/first_run_tutorial.dart';
@@ -53,21 +53,21 @@ class _LoginScreenState extends State<LoginScreen>
         steps: const [
           TutorialStep(
             icon: Icons.person_rounded,
-            title: 'Ingia kwenye akaunti',
-            body:
-                'Weka username au email pamoja na nywila uliyopewa ili kufungua biashara zako.',
+            title: 'Username au email',
+            body: 'Andika hapa username au email uliyopewa.',
+            targetId: 'login_user',
           ),
           TutorialStep(
             icon: Icons.lock_rounded,
-            title: 'Chagua biashara na tawi',
-            body:
-                'Baada ya login, app itakupeleka kuchagua biashara na tawi kabla ya kuanza kuuza.',
+            title: 'Nywila',
+            body: 'Weka nywila yako, kisha bonyeza Ingia. Ukishaingia mara moja, app inafanya kazi hata bila mtandao.',
+            targetId: 'login_pass',
           ),
           TutorialStep(
             icon: Icons.storefront_rounded,
-            title: 'Sajili biashara mpya',
-            body:
-                'Kama bado huna akaunti, tumia kitufe cha kusajili biashara mpya kuanza.',
+            title: 'Huna akaunti?',
+            body: 'Bonyeza hapa kusajili biashara mpya — inachukua dakika moja.',
+            targetId: 'login_register',
           ),
         ],
       );
@@ -92,7 +92,7 @@ class _LoginScreenState extends State<LoginScreen>
 
     try {
       final serverUrl = _urlCtrl.text.trim().replaceAll(RegExp(r'/+$'), '');
-      final api = ApiService(serverUrl);
+      final api = OfflineApiService(serverUrl);
       final res = await api.login(_userCtrl.text.trim(), _passCtrl.text);
       if (!mounted) return;
 
@@ -362,7 +362,9 @@ class _LoginScreenState extends State<LoginScreen>
         ],
         // ── Username ────────────────────────────────────────
         _fieldLabel('👤  Jina la Mtumiaji'),
-        _textField(
+        TutorialTarget(
+          id: 'login_user',
+          child: _textField(
           controller: _userCtrl,
           hint: 'username au email',
           icon: Icons.person_outline_rounded,
@@ -371,11 +373,14 @@ class _LoginScreenState extends State<LoginScreen>
               : null,
           action: TextInputAction.next,
         ),
+        ),
         const SizedBox(height: 18),
 
         // ── Password ────────────────────────────────────────
         _fieldLabel('🔑  Nywila'),
-        TextFormField(
+        TutorialTarget(
+          id: 'login_pass',
+          child: TextFormField(
           controller: _passCtrl,
           obscureText: _obscure,
           style: TextStyle(color: AppColors.textWhite, fontSize: 15),
@@ -394,6 +399,7 @@ class _LoginScreenState extends State<LoginScreen>
               ),
           validator: (v) => (v == null || v.isEmpty) ? 'Ingiza nywila' : null,
           onFieldSubmitted: (_) => _login(),
+        ),
         ),
         const SizedBox(height: 22),
 
@@ -425,7 +431,9 @@ class _LoginScreenState extends State<LoginScreen>
         const SizedBox(height: 20),
 
         // ── Register link ───────────────────────────────────
-        OutlinedButton.icon(
+        TutorialTarget(
+          id: 'login_register',
+          child: OutlinedButton.icon(
           onPressed: () => Navigator.of(context).push(
             MaterialPageRoute(
               builder: (_) => RegisterScreen(serverUrl: _urlCtrl.text.trim()),
@@ -450,6 +458,7 @@ class _LoginScreenState extends State<LoginScreen>
               borderRadius: BorderRadius.circular(14),
             ),
           ),
+        ),
         ),
 
         if (!desktop) ...[const SizedBox(height: 28), _buildFooter()],

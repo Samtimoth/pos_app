@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/business.dart';
@@ -121,20 +123,20 @@ class _BusinessSelectScreenState extends State<BusinessSelectScreen>
           TutorialStep(
             icon: Icons.storefront_rounded,
             title: 'Chagua biashara',
-            body:
-                'Gusa biashara unayotaka kuendesha. Kama biashara ina matawi mengi, chagua tawi kwanza.',
+            body: 'Gusa biashara unayotaka kuendesha. Ikiwa na matawi mengi, chagua tawi kwanza.',
+            targetId: 'biz_first',
           ),
           TutorialStep(
             icon: Icons.add_business_rounded,
             title: 'Ongeza biashara',
-            body:
-                'Kitufe cha chini kinakuwezesha kuongeza biashara mpya kwenye akaunti hii.',
+            body: 'Kitufe hiki kinaongeza biashara mpya kwenye akaunti hii hii.',
+            targetId: 'biz_add',
           ),
           TutorialStep(
             icon: Icons.logout_rounded,
-            title: 'Toka kwa usalama',
-            body:
-                'Ukibonyeza logout app itafuta session na kukurudisha login bila kubakiza screens za zamani.',
+            title: 'Toka',
+            body: 'Logout inafuta session na kukurudisha kwenye login.',
+            targetId: 'biz_logout',
           ),
         ],
       );
@@ -186,7 +188,9 @@ class _BusinessSelectScreenState extends State<BusinessSelectScreen>
           ],
         ),
       ),
-      floatingActionButton: FloatingActionButton.extended(
+      floatingActionButton: TutorialTarget(
+        id: 'biz_add',
+        child: FloatingActionButton.extended(
         onPressed: _showAddBusiness,
         backgroundColor: AppColors.primary,
         icon: const Icon(Icons.add_business_rounded, color: Colors.white),
@@ -194,6 +198,7 @@ class _BusinessSelectScreenState extends State<BusinessSelectScreen>
           'Ongeza Biashara',
           style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
         ),
+      ),
       ),
     );
   }
@@ -257,7 +262,9 @@ class _BusinessSelectScreenState extends State<BusinessSelectScreen>
               icon: const Icon(Icons.refresh_rounded, color: Colors.white),
               onPressed: _loadBusinesses,
             ),
-            IconButton(
+            TutorialTarget(
+              id: 'biz_logout',
+              child: IconButton(
               icon: const Icon(Icons.logout_rounded, color: Colors.white),
               tooltip: 'Toka',
               onPressed: () async {
@@ -270,6 +277,7 @@ class _BusinessSelectScreenState extends State<BusinessSelectScreen>
                   (_) => false,
                 );
               },
+            ),
             ),
           ],
         ),
@@ -327,7 +335,9 @@ class _BusinessSelectScreenState extends State<BusinessSelectScreen>
             child: Transform.scale(scale: 0.94 + (0.06 * v), child: child),
           ),
         ),
-        child: _BusinessCard(
+        child: TutorialTarget(
+          id: i == 0 ? 'biz_first' : 'biz_$i',
+          child: _BusinessCard(
           business: biz,
           selectedBranch: _selectedBranch[biz.businessId],
           onBranchChanged: (b) =>
@@ -339,6 +349,7 @@ class _BusinessSelectScreenState extends State<BusinessSelectScreen>
             });
             context.read<AppProvider>().updateLocalBusiness(updated);
           },
+        ),
         ),
       );
     },
@@ -654,6 +665,7 @@ class _EditBusinessSheetState extends State<_EditBusinessSheet> {
   );
   late String _country = widget.business.country;
   late String _currency = widget.business.currency;
+  late ReceiptTemplate _template = widget.business.receiptTemplate;
   bool _saving = false;
 
   @override
@@ -712,6 +724,7 @@ class _EditBusinessSheetState extends State<_EditBusinessSheet> {
         currency: _currency,
         receiptHeader: _receiptHeaderCtrl.text.trim(),
         receiptFooter: _receiptFooterCtrl.text.trim(),
+        receiptTemplate: jsonEncode(_template.toJson()),
       );
       if (!mounted) return;
       if (res['success'] == true) {
@@ -722,6 +735,7 @@ class _EditBusinessSheetState extends State<_EditBusinessSheet> {
             tradeName: _tradeCtrl.text.trim(),
             receiptHeader: _receiptHeaderCtrl.text.trim(),
             receiptFooter: _receiptFooterCtrl.text.trim(),
+            receiptTemplate: _template,
             role: widget.business.role,
             country: _country,
             currency: _currency,
@@ -951,6 +965,28 @@ class _EditBusinessSheetState extends State<_EditBusinessSheet> {
                           ),
                         ),
                       ),
+                      const SizedBox(height: 18),
+                      Text(
+                        'Sehemu za Kuonyesha kwenye Risiti',
+                        style: TextStyle(
+                          color: AppColors.textMuted,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      _templateToggle('Logo ya biashara', _template.showLogo,
+                          (v) => setState(() => _template = _template.copyWith(showLogo: v))),
+                      _templateToggle('QR code (uthibitisho)', _template.showQr,
+                          (v) => setState(() => _template = _template.copyWith(showQr: v))),
+                      _templateToggle('Jina la muuzaji (cashier)', _template.showCashier,
+                          (v) => setState(() => _template = _template.copyWith(showCashier: v))),
+                      _templateToggle('Jina/namba ya mteja', _template.showCustomer,
+                          (v) => setState(() => _template = _template.copyWith(showCustomer: v))),
+                      _templateToggle('Anuani ya biashara', _template.showAddress,
+                          (v) => setState(() => _template = _template.copyWith(showAddress: v))),
+                      _templateToggle('Namba ya simu ya biashara', _template.showPhone,
+                          (v) => setState(() => _template = _template.copyWith(showPhone: v))),
                     ],
                   ),
                 ),
@@ -1046,6 +1082,18 @@ class _EditBusinessSheetState extends State<_EditBusinessSheet> {
       ),
     );
   }
+
+  Widget _templateToggle(String label, bool value, ValueChanged<bool> onChanged) => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 1),
+        child: SwitchListTile(
+          value: value,
+          onChanged: onChanged,
+          title: Text(label, style: TextStyle(color: AppColors.textWhite, fontSize: 13)),
+          activeThumbColor: AppColors.primaryLt,
+          dense: true,
+          contentPadding: EdgeInsets.zero,
+        ),
+      );
 
   Widget _labeledPicker(String label, Widget picker) => Column(
     crossAxisAlignment: CrossAxisAlignment.start,

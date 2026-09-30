@@ -1,18 +1,35 @@
 import 'dart:io' show Platform;
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show HapticFeedback;
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:printing/printing.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
+import 'package:barcode/barcode.dart' as bc;
+import 'package:http/http.dart' as http;
+import '../models/business.dart';
+import '../models/customer.dart';
 import '../models/product.dart';
+import '../models/sale.dart';
 import '../providers/app_provider.dart';
 import '../providers/cart_provider.dart';
+import '../services/storage_service.dart';
 import '../theme/app_theme.dart';
 import '../l10n/app_l10n.dart';
 import '../utils/cat_style.dart';
+import '../providers/held_sales_provider.dart';
+import '../providers/shift_provider.dart';
+import '../services/crm_api.dart';
+import '../widgets/discount_field.dart';
+import '../widgets/first_run_tutorial.dart';
+import '../widgets/held_sales_sheet.dart';
+import '../widgets/manager_pin_dialog.dart';
+import '../widgets/shift_sheet.dart';
+import '../widgets/split_payment_field.dart';
+import 'customers_screen.dart';
 
 class PosScreen extends StatefulWidget {
   final bool desktop;
@@ -35,7 +52,7 @@ class _PosScreenState extends State<PosScreen> {
   final _barcodeDesktopCtrl = TextEditingController();
 
   // Mobile barcode scan
-  bool get _canScan => !kIsWeb && (Platform.isAndroid || Platform.isIOS);
+  bool get _canScan => kIsWeb || Platform.isAndroid || Platform.isIOS;
 
   // Desktop: called when USB scanner or keyboard submits a barcode
   void _handleDesktopBarcode(String raw) {
@@ -101,21 +118,34 @@ class _PosScreenState extends State<PosScreen> {
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (_) => _PosBarcodeSheet(
-        onScanned: (barcode) {
-          _searchCtrl.text = barcode;
-          _search = barcode;
-          _filter();
-          // Auto-add if exactly one in-stock product matches
-          final matches = _filtered
-              .where((p) => p.barcode == barcode && p.stock > 0)
-              .toList();
-          if (matches.length == 1) {
-            context.read<CartProvider>().addProduct(matches.first);
-          }
-        },
-      ),
+      builder: (_) => _PosBarcodeSheet(onScanned: _addByBarcode),
     );
+  }
+
+  /// Look a barcode up in the FULL product list (ignores search/category
+  /// filters) and add it to the cart. Returns a message for the scanner toast
+  /// and whether it succeeded.
+  ({bool ok, String msg}) _addByBarcode(String raw) {
+    final code = raw.trim();
+    final l = L.of(context);
+    final matches = _allProducts.where((p) => p.barcode == code).toList();
+    if (matches.isEmpty) {
+      return (ok: false, msg: l.isSw ? 'Barcode haijulikani: $code' : 'Unknown barcode: $code');
+    }
+    final p = matches.first;
+    if (p.stock <= 0) {
+      return (ok: false, msg: '${p.name} — ${l.outOfStock}');
+    }
+    final cart = context.read<CartProvider>();
+    final before = cart.count;
+    cart.addProduct(p);
+    if (cart.count == before) {
+      return (ok: false, msg: l.isSw ? '${p.name}: stock imefika kikomo' : '${p.name}: stock limit reached');
+    }
+    final inCart = cart.items
+        .where((i) => i.productId == p.productId)
+        .fold(0, (a, i) => a + i.qty);
+    return (ok: true, msg: '${p.name}  ×$inCart');
   }
 
   @override
@@ -232,25 +262,8 @@ class _PosScreenState extends State<PosScreen> {
     final cart = context.watch<CartProvider>();
     return Scaffold(
       backgroundColor: AppColors.bg,
-      appBar: AppBar(
-        backgroundColor: AppColors.bgCard,
-        title: Text(
-          L.of(context).pos,
-          style: TextStyle(
-            color: AppColors.textWhite,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        iconTheme: IconThemeData(color: AppColors.textWhite),
-        actions: [
-          IconButton(
-            onPressed: _loadProducts,
-            icon: Icon(Icons.refresh_rounded, color: AppColors.textMuted),
-          ),
-        ],
-      ),
       body: PremiumPageEntrance(
-        child: _ProductBrowser(
+        child: _MobileProductBrowser(
           categories: _categories,
           filtered: _filtered,
           loading: _loading,
@@ -266,13 +279,12 @@ class _PosScreenState extends State<PosScreen> {
             _filter();
           },
           onRefresh: _loadProducts,
-          desktop: false,
           onScanTap: _canScan ? _openBarcodeScanner : null,
         ),
       ),
       floatingActionButton: cart.count > 0
           ? Padding(
-              padding: const EdgeInsets.only(bottom: 86),
+              padding: const EdgeInsets.only(bottom: 74),
               child: FloatingActionButton.extended(
                 heroTag: 'pos_mobile_cart_fab',
                 onPressed: () => _showMobileCart(context),
@@ -547,25 +559,29 @@ class _ProductBrowser extends StatelessWidget {
     final crossAxis = desktop ? 3 : 2;
     return Column(
       children: [
-        // ── Desktop barcode entry card (USB scanner or keyboard) ─────────
-        if (desktop && barcodeCtrl != null && onBarcodeSubmit != null)
-          _DesktopBarcodeBar(
-            controller: barcodeCtrl!,
-            onSubmit: onBarcodeSubmit!,
-            l: l,
+        // Hero summary (mobile only – the desktop cart panel shows totals)
+        if (!desktop)
+          _PosHeroSummary(
+            products: filtered.length,
+            desktop: desktop,
+            onScanTap: onScanTap,
+            onRefresh: onRefresh,
           ),
-        // Pro hero summary (mobile + desktop)
-        _PosHeroSummary(
-          products: filtered.length,
-          desktop: desktop,
-          onScanTap: onScanTap,
-          onRefresh: onRefresh,
-        ),
-        // Search bar
+        // Search bar (+ USB/keyboard barcode field on desktop)
         Padding(
-          padding: EdgeInsets.fromLTRB(desktop ? 20 : 12, 14, 12, 6),
+          padding: EdgeInsets.fromLTRB(desktop ? 20 : 12, desktop ? 16 : 14, desktop ? 20 : 12, 6),
           child: Row(
             children: [
+              if (desktop && barcodeCtrl != null && onBarcodeSubmit != null) ...[
+                Expanded(
+                  child: _DesktopBarcodeBar(
+                    controller: barcodeCtrl!,
+                    onSubmit: onBarcodeSubmit!,
+                    l: l,
+                  ),
+                ),
+                const SizedBox(width: 10),
+              ],
               Expanded(
                 child: TextField(
                   controller: searchCtrl,
@@ -731,19 +747,27 @@ class _ProductBrowser extends StatelessWidget {
                   padding: EdgeInsets.fromLTRB(
                     desktop ? 20 : 12,
                     0,
-                    12,
+                    desktop ? 20 : 12,
                     desktop ? 16 : 130,
                   ),
-                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: crossAxis,
-                    crossAxisSpacing: 10,
-                    mainAxisSpacing: 10,
-                    childAspectRatio: desktop ? 1.0 : 0.85,
-                  ),
+                  gridDelegate: desktop
+                      // as many ~170px cards as fit → ~6 per row on a laptop
+                      ? const SliverGridDelegateWithMaxCrossAxisExtent(
+                          maxCrossAxisExtent: 150,
+                          crossAxisSpacing: 8,
+                          mainAxisSpacing: 8,
+                          childAspectRatio: 1.0,
+                        )
+                      : SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: crossAxis,
+                          crossAxisSpacing: 10,
+                          mainAxisSpacing: 10,
+                          childAspectRatio: 0.85,
+                        ),
                   itemCount: filtered.length,
                   itemBuilder: (_, i) => _ProStaggeredItem(
                     index: i,
-                    child: _ProductCard(product: filtered[i], fmt: fmt),
+                    child: _ProductCard(product: filtered[i], fmt: fmt, compact: desktop),
                   ),
                 ),
         ),
@@ -778,6 +802,8 @@ class _DesktopBarcodeBarState extends State<_DesktopBarcodeBar> {
   void initState() {
     super.initState();
     _focus.addListener(_onFocusChange);
+    // USB scanners "type" into the focused field – keep it ready.
+    WidgetsBinding.instance.addPostFrameCallback((_) => _focus.requestFocus());
   }
 
   void _onFocusChange() => setState(() => _focused = _focus.hasFocus);
@@ -791,121 +817,58 @@ class _DesktopBarcodeBarState extends State<_DesktopBarcodeBar> {
 
   @override
   Widget build(BuildContext context) {
-    final l = widget.l;
-    return GestureDetector(
-      onTap: () => _focus.requestFocus(),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 180),
-        margin: const EdgeInsets.fromLTRB(20, 14, 12, 0),
-        padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-        decoration: BoxDecoration(
-          color: _focused
-              ? AppColors.primary.withAlpha(38)
-              : AppColors.primary.withAlpha(15),
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(
-            color: _focused
-                ? AppColors.primaryLt
-                : AppColors.primary.withAlpha(90),
-            width: _focused ? 1.8 : 1.2,
-          ),
+    return TextField(
+      controller: widget.controller,
+      focusNode: _focus,
+      style: TextStyle(color: AppColors.textWhite, fontSize: 13.5),
+      decoration: InputDecoration(
+        hintText: widget.l.isSw
+            ? 'Scan barcode (USB) au andika + Enter'
+            : 'Scan barcode (USB) or type + Enter',
+        hintStyle: TextStyle(color: AppColors.textMuted, fontSize: 13),
+        prefixIcon: Icon(
+          Icons.qr_code_scanner_rounded,
+          color: _focused ? AppColors.primaryLt : AppColors.textMuted,
+          size: 20,
         ),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            // ── Icon ────────────────────────────────────────────────────
-            AnimatedContainer(
-              duration: const Duration(milliseconds: 180),
-              padding: const EdgeInsets.all(9),
-              decoration: BoxDecoration(
-                color: _focused
-                    ? AppColors.primaryLt.withAlpha(35)
-                    : AppColors.primary.withAlpha(40),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Icon(
-                Icons.qr_code_scanner_rounded,
-                color: _focused
-                    ? AppColors.primaryLt
-                    : AppColors.primary.withAlpha(220),
-                size: 26,
-              ),
-            ),
-            const SizedBox(width: 12),
-            // ── Label + text field ───────────────────────────────────────
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    l.isSw ? 'Scan Barcode ya Bidhaa' : 'Scan Product Barcode',
-                    style: TextStyle(
-                      color: _focused
-                          ? AppColors.primaryLt
-                          : AppColors.textLight,
-                      fontWeight: FontWeight.w700,
-                      fontSize: 13,
-                    ),
+        suffixIcon: _focused
+            ? Padding(
+                padding: const EdgeInsets.only(right: 10),
+                child: Container(
+                  width: 8,
+                  height: 8,
+                  decoration: const BoxDecoration(
+                    color: AppColors.accent,
+                    shape: BoxShape.circle,
                   ),
-                  const SizedBox(height: 6),
-                  TextField(
-                    controller: widget.controller,
-                    focusNode: _focus,
-                    autofocus: true,
-                    textInputAction: TextInputAction.done,
-                    onSubmitted: widget.onSubmit,
-                    style: TextStyle(
-                      color: AppColors.textWhite,
-                      fontSize: 14,
-                      letterSpacing: 0.5,
-                    ),
-                    decoration: InputDecoration(
-                      hintText: l.isSw
-                          ? 'Scan kwa USB scanner → Enter kuongeza kwenye cart'
-                          : 'Scan with USB scanner → Enter to add to cart',
-                      hintStyle: TextStyle(
-                        color: AppColors.textMuted,
-                        fontSize: 12,
-                      ),
-                      prefixIcon: Icon(
-                        Icons.qr_code_rounded,
-                        color: AppColors.textMuted,
-                        size: 17,
-                      ),
-                      isDense: true,
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 10,
-                      ),
-                      enabledBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(10),
-                        borderSide: BorderSide(color: AppColors.border),
-                      ),
-                      focusedBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(10),
-                        borderSide: const BorderSide(
-                          color: AppColors.primaryLt,
-                          width: 1.5,
-                        ),
-                      ),
-                      filled: true,
-                      fillColor: AppColors.bgDark,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
+                ),
+              )
+            : null,
+        suffixIconConstraints: const BoxConstraints(minWidth: 0, minHeight: 0),
+        filled: true,
+        fillColor: _focused ? AppColors.primary.withAlpha(30) : AppColors.bgCard,
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide(color: AppColors.border),
         ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide(color: AppColors.primary.withAlpha(120)),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: AppColors.primaryLt, width: 1.6),
+        ),
+        contentPadding: const EdgeInsets.symmetric(vertical: 12),
       ),
+      onSubmitted: (v) {
+        widget.onSubmit(v);
+        _focus.requestFocus();
+      },
     );
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Unit picker — shown when a multi-unit product is tapped
-// ─────────────────────────────────────────────────────────────────────────────
 void _showUnitPicker(BuildContext context, Product product) {
   final fmt = NumberFormat('#,###', 'en_US');
   showModalBottomSheet(
@@ -1102,7 +1065,9 @@ void _showUnitPicker(BuildContext context, Product product) {
 class _ProductCard extends StatelessWidget {
   final Product product;
   final NumberFormat fmt;
-  const _ProductCard({required this.product, required this.fmt});
+  /// Tighter spacing / smaller type for the 3-column phone grid.
+  final bool compact;
+  const _ProductCard({required this.product, required this.fmt, this.compact = false});
 
   @override
   Widget build(BuildContext context) {
@@ -1133,12 +1098,12 @@ class _ProductCard extends StatelessWidget {
         duration: const Duration(milliseconds: 180),
         decoration: BoxDecoration(
           color: AppColors.bgCard,
-          borderRadius: BorderRadius.circular(18),
+          borderRadius: BorderRadius.circular(compact ? 14 : 18),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withAlpha(35),
-              blurRadius: 12,
-              offset: const Offset(0, 6),
+              color: Colors.black.withAlpha(compact ? 20 : 35),
+              blurRadius: compact ? 6 : 12,
+              offset: Offset(0, compact ? 3 : 6),
             ),
           ],
           border: Border.all(
@@ -1153,24 +1118,24 @@ class _ProductCard extends StatelessWidget {
         child: Stack(
           children: [
             Padding(
-              padding: const EdgeInsets.all(12),
+              padding: EdgeInsets.all(compact ? 8 : 12),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   // ── Category icon ───────────────────────────────────────────
                   Container(
-                    width: 46,
-                    height: 46,
+                    width: compact ? 32 : 46,
+                    height: compact ? 32 : 46,
                     decoration: BoxDecoration(
                       color: catColor.withAlpha(outOfStock ? 15 : 28),
-                      borderRadius: BorderRadius.circular(14),
+                      borderRadius: BorderRadius.circular(compact ? 10 : 14),
                       border: Border.all(
                         color: catColor.withAlpha(outOfStock ? 30 : 70),
                       ),
                     ),
-                    child: Icon(catIcon, color: catColor, size: 22),
+                    child: Icon(catIcon, color: catColor, size: compact ? 16 : 22),
                   ),
-                  const SizedBox(height: 8),
+                  SizedBox(height: compact ? 6 : 8),
                   // ── Name ─────────────────────────────────────────────────────
                   Text(
                     product.name,
@@ -1181,22 +1146,27 @@ class _ProductCard extends StatelessWidget {
                           ? AppColors.textMuted
                           : AppColors.textWhite,
                       fontWeight: FontWeight.w600,
-                      fontSize: 13,
+                      fontSize: compact ? 11.5 : 13,
+                      height: 1.15,
                     ),
                   ),
                   const Spacer(),
                   // ── Price ─────────────────────────────────────────────────────
                   Text(
-                    'TZS ${fmt.format(product.sellPrice)}',
+                    compact
+                        ? fmt.format(product.sellPrice)
+                        : 'TZS ${fmt.format(product.sellPrice)}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                       color: outOfStock
                           ? AppColors.textMuted
                           : AppColors.primary,
                       fontWeight: FontWeight.bold,
-                      fontSize: 14,
+                      fontSize: compact ? 12.5 : 14,
                     ),
                   ),
-                  const SizedBox(height: 3),
+                  SizedBox(height: compact ? 1 : 3),
                   // ── Stock ─────────────────────────────────────────────────────
                   Row(
                     children: [
@@ -1208,17 +1178,21 @@ class _ProductCard extends StatelessWidget {
                             : AppColors.textMuted,
                       ),
                       const SizedBox(width: 3),
-                      Text(
+                      Flexible(
+                        child: Text(
                         '${product.stock} ${product.unit}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                         style: TextStyle(
                           color: outOfStock
                               ? AppColors.chartRed
                               : AppColors.textMuted,
-                          fontSize: 11,
+                          fontSize: compact ? 10 : 11,
                           fontWeight: outOfStock
                               ? FontWeight.w600
                               : FontWeight.normal,
                         ),
+                      ),
                       ),
                     ],
                   ),
@@ -1346,14 +1320,105 @@ class _QtyStepper extends StatelessWidget {
   );
 }
 
+class _HeldSalesButton extends StatelessWidget {
+  final VoidCallback onTap;
+  final bool compact;
+  const _HeldSalesButton({required this.onTap, this.compact = false});
+
+  @override
+  Widget build(BuildContext context) {
+    final count = context.watch<HeldSalesProvider>().count;
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        IconButton(
+          tooltip: 'Mauzo yaliyowekwa kando',
+          onPressed: onTap,
+          icon: Icon(Icons.pause_circle_filled_rounded, color: AppColors.chartPurple, size: compact ? 18 : 22),
+          padding: compact ? EdgeInsets.zero : null,
+          constraints: compact ? const BoxConstraints(minWidth: 32, minHeight: 32) : null,
+          visualDensity: compact ? VisualDensity.compact : null,
+        ),
+        if (count > 0)
+          Positioned(
+            right: 2, top: 2,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+              decoration: BoxDecoration(color: Colors.redAccent, borderRadius: BorderRadius.circular(8)),
+              child: Text('$count', style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+/// Kitufe cha Zamu (Shift) — kinaonyesha kijani ikiwa zamu iko wazi, kijivu
+/// ikiwa haipo. Kubonyeza kunafungua ShiftSheet (fungua/funga zamu + historia).
+class _ShiftButton extends StatefulWidget {
+  final bool compact;
+  const _ShiftButton({this.compact = false});
+
+  @override
+  State<_ShiftButton> createState() => _ShiftButtonState();
+}
+
+class _ShiftButtonState extends State<_ShiftButton> {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _refresh());
+  }
+
+  Future<void> _refresh() async {
+    if (!mounted) return;
+    final app = context.read<AppProvider>();
+    final url = app.user?.serverUrl;
+    final bizId = app.selectedBusiness?.businessId;
+    final userId = app.user?.userId;
+    if (url == null || bizId == null || userId == null) return;
+    await context.read<ShiftProvider>().refresh(CrmApi(url), bizId, userId);
+  }
+
+  Future<void> _open() async {
+    final changed = await ShiftSheet.show(context);
+    if (changed == true) _refresh();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isOpen = context.watch<ShiftProvider>().isOpen;
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        IconButton(
+          tooltip: isOpen ? 'Zamu iko wazi' : 'Fungua/Funga Zamu',
+          onPressed: _open,
+          icon: Icon(Icons.point_of_sale_rounded, color: isOpen ? AppColors.accent : AppColors.textMuted, size: widget.compact ? 18 : 22),
+          padding: widget.compact ? EdgeInsets.zero : null,
+          constraints: widget.compact ? const BoxConstraints(minWidth: 32, minHeight: 32) : null,
+          visualDensity: widget.compact ? VisualDensity.compact : null,
+        ),
+        if (isOpen)
+          Positioned(
+            right: 4, top: 4,
+            child: Container(width: 8, height: 8, decoration: BoxDecoration(color: AppColors.accent, shape: BoxShape.circle)),
+          ),
+      ],
+    );
+  }
+}
+
 class _TotalCard extends StatelessWidget {
   final NumberFormat fmt;
   final double total;
-  const _TotalCard({required this.fmt, required this.total});
+  final double discount;
+  const _TotalCard({required this.fmt, required this.total, this.discount = 0});
 
   @override
   Widget build(BuildContext context) {
     final l = L.of(context);
+    final grandTotal = (total - discount).clamp(0, total);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: BoxDecoration(
@@ -1363,7 +1428,24 @@ class _TotalCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: AppColors.primary.withAlpha(90)),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (discount > 0) ...[
+            Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+              Text('Jumla ndogo', style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
+              Text('TZS ${fmt.format(total)}', style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
+            ]),
+            const SizedBox(height: 3),
+            Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+              Text('Punguzo', style: TextStyle(color: Colors.orangeAccent, fontSize: 12, fontWeight: FontWeight.w600)),
+              Text('- TZS ${fmt.format(discount)}', style: const TextStyle(color: Colors.orangeAccent, fontSize: 12, fontWeight: FontWeight.w600)),
+            ]),
+            const SizedBox(height: 6),
+            Divider(color: AppColors.border, height: 1),
+            const SizedBox(height: 6),
+          ],
+          Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           Row(
@@ -1392,12 +1474,14 @@ class _TotalCard extends StatelessWidget {
             ],
           ),
           Text(
-            'TZS ${fmt.format(total)}',
+            'TZS ${fmt.format(grandTotal)}',
             style: const TextStyle(
               color: AppColors.primary,
               fontWeight: FontWeight.bold,
               fontSize: 18,
             ),
+          ),
+        ],
           ),
         ],
       ),
@@ -1464,41 +1548,79 @@ class _ModeChip extends StatelessWidget {
     borderRadius: BorderRadius.circular(12),
     child: AnimatedContainer(
       duration: const Duration(milliseconds: 180),
-      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
+      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 6),
       decoration: BoxDecoration(
-        gradient: selected
-            ? const LinearGradient(colors: AppColors.gradPrimary)
-            : null,
-        color: selected ? null : AppColors.bg,
-        borderRadius: BorderRadius.circular(12),
+        color: selected ? AppColors.primary : AppColors.bgInput,
+        borderRadius: BorderRadius.circular(10),
         border: Border.all(
-          color: selected ? AppColors.primaryLt : AppColors.border,
+          color: selected ? AppColors.primary : AppColors.border,
         ),
       ),
-      child: Column(
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(
             icon,
-            size: 16,
+            size: 14,
             color: selected ? Colors.white : AppColors.textMuted,
           ),
-          const SizedBox(height: 4),
-          Text(
-            label,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              color: selected ? Colors.white : AppColors.textMuted,
-              fontSize: 10,
-              fontWeight: selected ? FontWeight.bold : FontWeight.w600,
+          const SizedBox(width: 5),
+          Flexible(
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: selected ? Colors.white : AppColors.textMuted,
+                fontSize: 11,
+                fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
+              ),
             ),
           ),
         ],
       ),
     ),
   );
+}
+
+
+/// "Chagua mteja" button — opens the customer list in pick mode and fills
+/// the name/phone fields of the checkout form.
+class _PickCustomerButton extends StatelessWidget {
+  final TextEditingController nameCtrl;
+  final TextEditingController phoneCtrl;
+  final ValueChanged<Customer> onPicked;
+  const _PickCustomerButton({required this.nameCtrl, required this.phoneCtrl, required this.onPicked});
+
+  @override
+  Widget build(BuildContext context) {
+    final l = L.of(context);
+    return Tooltip(
+      message: l.isSw ? 'Chagua mteja aliyesajiliwa' : 'Pick a saved customer',
+      child: SizedBox(
+        width: 44,
+        height: 44,
+        child: Material(
+          color: AppColors.primary.withAlpha(30),
+          borderRadius: BorderRadius.circular(12),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(12),
+            onTap: () async {
+              final c = await Navigator.of(context).push<Customer>(
+                MaterialPageRoute(builder: (_) => const CustomersScreen(pickMode: true)),
+              );
+              if (c == null) return;
+              nameCtrl.text = c.name;
+              if (c.phone.isNotEmpty) phoneCtrl.text = c.phone;
+              onPicked(c);
+            },
+            child: Icon(Icons.person_search_rounded, color: AppColors.primaryLt, size: 22),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class _PosInput extends StatelessWidget {
@@ -1525,7 +1647,8 @@ class _PosInput extends StatelessWidget {
       hintText: hint,
       hintStyle: TextStyle(color: AppColors.textMuted, fontSize: 13),
       prefixIcon: Icon(icon, color: AppColors.textMuted, size: 18),
-      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      isDense: true,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
     ),
   );
 }
@@ -1552,6 +1675,14 @@ class _CartPanelState extends State<_CartPanel> {
   String _customerMode = 'walkin';
   String _payType = 'cash';
   bool _processing = false;
+  SplitPaymentResult _splitPay = SplitPaymentResult.off;
+  double _discount = 0;
+
+  // Set when "Chagua mteja" is used; only trusted at checkout if the phone
+  // field still matches what was picked (guards against a stale id if the
+  // cashier picks someone then types a different number for someone else).
+  int? _pickedCustomerId;
+  String? _pickedCustomerPhone;
 
   @override
   void dispose() {
@@ -1561,6 +1692,114 @@ class _CartPanelState extends State<_CartPanel> {
     _noteCtrl.dispose();
     _paidCtrl.dispose();
     super.dispose();
+  }
+
+  // ── Weka kando / Rudisha mauzo (hold/resume) ──────────────────────────────
+  Future<void> _holdCart() async {
+    final app = context.read<AppProvider>();
+    final cart = context.read<CartProvider>();
+    final bizId = app.selectedBusiness?.businessId;
+    if (bizId == null || cart.items.isEmpty) return;
+    final label = await _promptHoldLabel();
+    if (!mounted || label == null) return; // cashier cancelled
+    await context.read<HeldSalesProvider>().load(bizId);
+    if (!mounted) return;
+    await context.read<HeldSalesProvider>().hold(
+          label: label.isNotEmpty ? label : (_customerCtrl.text.trim().isNotEmpty ? _customerCtrl.text.trim() : "Mteja"),
+          items: List<CartItem>.from(cart.items),
+          customerName: _customerCtrl.text.trim(),
+          customerPhone: _phoneCtrl.text.trim(),
+          customerMode: _customerMode,
+          payType: _payType,
+        );
+    cart.clear();
+    _customerCtrl.clear();
+    _phoneCtrl.clear();
+    _locationCtrl.clear();
+    _noteCtrl.clear();
+    _paidCtrl.clear();
+    setState(() {
+      _customerMode = "walkin";
+      _payType = "cash";
+      _pickedCustomerId = null;
+      _pickedCustomerPhone = null;
+      _splitPay = SplitPaymentResult.off;
+      _discount = 0;
+    });
+    if (mounted) _snack("Mauzo yamewekwa kando", AppColors.chartPurple);
+  }
+
+  Future<String?> _promptHoldLabel() async {
+    final ctrl = TextEditingController(text: _customerCtrl.text.trim());
+    final res = await showDialog<String>(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: AppColors.bgCard,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Text("Weka Kikapu Kando", style: TextStyle(color: AppColors.textWhite, fontSize: 16)),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          style: TextStyle(color: AppColors.textWhite),
+          decoration: InputDecoration(
+            hintText: "Jina la mteja (optional)",
+            hintStyle: TextStyle(color: AppColors.textMuted),
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: Text("Ghairi", style: TextStyle(color: AppColors.textMuted))),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, ctrl.text.trim()),
+            style: ElevatedButton.styleFrom(backgroundColor: AppColors.chartPurple, foregroundColor: Colors.white),
+            child: const Text("Weka Kando"),
+          ),
+        ],
+      ),
+    );
+    return res;
+  }
+
+  Future<void> _openHeldSales() async {
+    final app = context.read<AppProvider>();
+    final bizId = app.selectedBusiness?.businessId;
+    if (bizId == null) return;
+    await context.read<HeldSalesProvider>().load(bizId);
+    if (!mounted) return;
+    final picked = await HeldSalesSheet.show(context);
+    if (picked == null || !mounted) return;
+    await _resumeHeld(picked);
+  }
+
+  Future<void> _resumeHeld(HeldSale h) async {
+    final cart = context.read<CartProvider>();
+    if (cart.items.isNotEmpty) {
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (_) => AlertDialog(
+          backgroundColor: AppColors.bgCard,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: Text("Kikapu cha sasa kina bidhaa", style: TextStyle(color: AppColors.textWhite, fontSize: 16)),
+          content: Text("Kitafutwa kikirudisha hiki kilichowekwa kando. Endelea?",
+              style: TextStyle(color: AppColors.textMuted, fontSize: 13)),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context, false), child: Text("Ghairi", style: TextStyle(color: AppColors.textMuted))),
+            ElevatedButton(onPressed: () => Navigator.pop(context, true), child: const Text("Endelea")),
+          ],
+        ),
+      );
+      if (ok != true) return;
+      if (!mounted) return;
+    }
+    final taken = await context.read<HeldSalesProvider>().take(h.id);
+    if (taken == null || !mounted) return;
+    cart.restoreItems(taken.items);
+    _customerCtrl.text = taken.customerName;
+    _phoneCtrl.text = taken.customerPhone;
+    setState(() {
+      _customerMode = taken.customerMode;
+      _payType = taken.payType;
+    });
+    if (mounted) _snack("Mauzo yamerudishwa", AppColors.accent);
   }
 
   bool get _needsCustomerDetails =>
@@ -1620,10 +1859,35 @@ class _CartPanelState extends State<_CartPanel> {
       }
     }
 
+    if (_payType == 'cash' && _splitPay.enabled && !_splitPay.valid) {
+      _snack(
+        l.isSw
+            ? 'Jumla ya njia za malipo haiendani na jumla ya mauzo'
+            : 'Split payment total does not match the sale total',
+        Colors.orange,
+      );
+      return;
+    }
+
     if (app.api == null || app.selectedBusiness == null) return;
+
+    // ── Punguzo kubwa (>10% ya jumla) linahitaji PIN ya meneja isipokuwa
+    // mtumaji mwenyewe ni meneja/mmiliki tayari (ona helpers/manager_pin.php).
+    String? discountPin;
+    if (_discount > 0 && cart.total > 0 && (_discount / cart.total) * 100 > 10 &&
+        app.user?.isManagerTier != true) {
+      discountPin = await ManagerPinDialog.show(context,
+          reasonLabel: 'Punguzo hili linazidi 10% ya jumla — meneja aweke PIN yake.');
+      if (discountPin == null) return; // cashier cancelled
+    }
+
+    final grandTotal = (cart.total - _discount).clamp(0, cart.total);
 
     setState(() => _processing = true);
     try {
+      final phone = _phoneCtrl.text.trim();
+      final confirmedCustomerId =
+          (_pickedCustomerId != null && _pickedCustomerPhone == phone) ? _pickedCustomerId : null;
       final res = await app.api!.createSale(
         businessId: app.selectedBusiness!.businessId,
         branchId: app.selectedBranch?.branchId ?? 0,
@@ -1631,6 +1895,11 @@ class _CartPanelState extends State<_CartPanel> {
         transactionType: _payType,
         items: cart.toApiItems(),
         amountPaid: _amountPaid(),
+        customerPhone: phone,
+        customerId: confirmedCustomerId,
+        payments: (_payType == 'cash' && _splitPay.enabled) ? _splitPay.payments : null,
+        overallDiscount: _discount > 0 ? _discount : null,
+        managerPin: discountPin,
       );
       if (!mounted) return;
       if (res['success'] == true) {
@@ -1646,8 +1915,16 @@ class _CartPanelState extends State<_CartPanel> {
           customerPhone: _phoneCtrl.text.trim(),
           customerType: _customerMode,
           paymentType: _payType,
-          total: cart.total,
-          amountPaid: _amountPaid() ?? cart.total,
+          total: grandTotal.toDouble(),
+          amountPaid: _amountPaid() ?? grandTotal.toDouble(),
+          changeAmount: (res['change_amount'] as num?)?.toDouble() ??
+              (_splitPay.enabled ? _splitPay.changeAmount : null),
+          discount: (res['discount_amount'] as num?)?.toDouble() ?? _discount,
+          cashierName: app.user?.fullname ?? '',
+          logoUrl: app.selectedBusiness?.logoPath ?? '',
+          businessAddress: app.selectedBusiness?.address ?? '',
+          businessPhone: app.selectedBusiness?.phone ?? '',
+          template: app.selectedBusiness?.receiptTemplate ?? const ReceiptTemplate(),
           items: cart.items
               .map(
                 (i) => _PosReceiptItem(
@@ -1677,8 +1954,17 @@ class _CartPanelState extends State<_CartPanel> {
         setState(() {
           _customerMode = 'walkin';
           _payType = 'cash';
+          _pickedCustomerId = null;
+          _pickedCustomerPhone = null;
+          _splitPay = SplitPaymentResult.off;
+          _discount = 0;
         });
-        _snack(L.of(context).saleSuccess, AppColors.accent);
+        _snack(
+          res['offline'] == true
+              ? (res['message'] as String? ?? L.of(context).saleSuccess)
+              : L.of(context).saleSuccess,
+          res['offline'] == true ? Colors.orange : AppColors.accent,
+        );
         widget.onNavChange?.call(2);
       } else {
         _snack(
@@ -1740,6 +2026,8 @@ class _CartPanelState extends State<_CartPanel> {
                     children: [
                       Text(
                         l.cart,
+                        overflow: TextOverflow.ellipsis,
+                        maxLines: 1,
                         style: TextStyle(
                           color: AppColors.textWhite,
                           fontWeight: FontWeight.bold,
@@ -1748,6 +2036,8 @@ class _CartPanelState extends State<_CartPanel> {
                       ),
                       Text(
                         '${cart.count} ${l.items} • TZS ${widget.fmt.format(cart.total)}',
+                        overflow: TextOverflow.ellipsis,
+                        maxLines: 1,
                         style: TextStyle(
                           color: AppColors.textMuted,
                           fontSize: 11,
@@ -1756,6 +2046,18 @@ class _CartPanelState extends State<_CartPanel> {
                     ],
                   ),
                 ),
+                _HeldSalesButton(onTap: _openHeldSales, compact: true),
+                const SizedBox(width: 2),
+                _ShiftButton(compact: true),
+                if (cart.count > 0)
+                  IconButton(
+                    tooltip: 'Weka kando',
+                    onPressed: _holdCart,
+                    icon: Icon(Icons.pause_circle_outline_rounded, color: AppColors.chartPurple, size: 18),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                    visualDensity: VisualDensity.compact,
+                  ),
                 if (cart.count > 0)
                   IconButton(
                     tooltip: l.clearCart,
@@ -1763,7 +2065,11 @@ class _CartPanelState extends State<_CartPanel> {
                     icon: const Icon(
                       Icons.delete_outline_rounded,
                       color: Colors.redAccent,
+                      size: 18,
                     ),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                    visualDensity: VisualDensity.compact,
                   ),
               ],
             ),
@@ -1871,21 +2177,41 @@ class _CartPanelState extends State<_CartPanel> {
                 padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
                 child: Column(
                   children: [
-                    _TotalCard(fmt: widget.fmt, total: cart.total),
+                    _TotalCard(fmt: widget.fmt, total: cart.total, discount: _discount),
+                    DiscountField(
+                      subtotal: cart.total,
+                      onChanged: (r) => setState(() => _discount = r.amount),
+                    ),
                     const SizedBox(height: 12),
                     _CustomerModeSelector(
                       value: _customerMode,
                       onChanged: (v) => setState(() => _customerMode = v),
                     ),
                     const SizedBox(height: 10),
-                    _PosInput(
-                      controller: _customerCtrl,
-                      hint: _needsCustomerDetails
-                          ? l.customer
-                          : (l.isSw
-                                ? 'Jina la mteja (optional)'
-                                : 'Customer name (optional)'),
-                      icon: Icons.person_outline_rounded,
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _PosInput(
+                            controller: _customerCtrl,
+                            hint: _needsCustomerDetails
+                                ? l.customer
+                                : (l.isSw
+                                      ? 'Jina la mteja (optional)'
+                                      : 'Customer name (optional)'),
+                            icon: Icons.person_outline_rounded,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        _PickCustomerButton(
+                          nameCtrl: _customerCtrl,
+                          phoneCtrl: _phoneCtrl,
+                          onPicked: (c) => setState(() {
+                            if (_customerMode == 'walkin') _customerMode = 'registered';
+                            _pickedCustomerId = c.customerId != 0 ? c.customerId : null;
+                            _pickedCustomerPhone = c.phone;
+                          }),
+                        ),
+                      ],
                     ),
                     if (_needsCustomerDetails) ...[
                       const SizedBox(height: 10),
@@ -1948,6 +2274,11 @@ class _CartPanelState extends State<_CartPanel> {
                       ],
                       onChanged: (v) => setState(() => _payType = v!),
                     ),
+                    if (_payType == 'cash')
+                      SplitPaymentField(
+                        total: (cart.total - _discount).clamp(0, cart.total),
+                        onChanged: (r) => setState(() => _splitPay = r),
+                      ),
                     if (_payType != 'cash') ...[
                       const SizedBox(height: 10),
                       _PosInput(
@@ -2036,6 +2367,11 @@ class _CartSheetState extends State<_CartSheet> {
   String _customerMode = 'walkin';
   String _payType = 'cash';
   bool _processing = false;
+  SplitPaymentResult _splitPay = SplitPaymentResult.off;
+  double _discount = 0;
+
+  int? _pickedCustomerId;
+  String? _pickedCustomerPhone;
 
   @override
   void dispose() {
@@ -2045,6 +2381,114 @@ class _CartSheetState extends State<_CartSheet> {
     _noteCtrl.dispose();
     _paidCtrl.dispose();
     super.dispose();
+  }
+
+  // ── Weka kando / Rudisha mauzo (hold/resume) ──────────────────────────────
+  Future<void> _holdCart() async {
+    final app = context.read<AppProvider>();
+    final cart = context.read<CartProvider>();
+    final bizId = app.selectedBusiness?.businessId;
+    if (bizId == null || cart.items.isEmpty) return;
+    final label = await _promptHoldLabel();
+    if (!mounted || label == null) return; // cashier cancelled
+    await context.read<HeldSalesProvider>().load(bizId);
+    if (!mounted) return;
+    await context.read<HeldSalesProvider>().hold(
+          label: label.isNotEmpty ? label : (_customerCtrl.text.trim().isNotEmpty ? _customerCtrl.text.trim() : "Mteja"),
+          items: List<CartItem>.from(cart.items),
+          customerName: _customerCtrl.text.trim(),
+          customerPhone: _phoneCtrl.text.trim(),
+          customerMode: _customerMode,
+          payType: _payType,
+        );
+    cart.clear();
+    _customerCtrl.clear();
+    _phoneCtrl.clear();
+    _locationCtrl.clear();
+    _noteCtrl.clear();
+    _paidCtrl.clear();
+    setState(() {
+      _customerMode = "walkin";
+      _payType = "cash";
+      _pickedCustomerId = null;
+      _pickedCustomerPhone = null;
+      _splitPay = SplitPaymentResult.off;
+      _discount = 0;
+    });
+    if (mounted) _snack("Mauzo yamewekwa kando", AppColors.chartPurple);
+  }
+
+  Future<String?> _promptHoldLabel() async {
+    final ctrl = TextEditingController(text: _customerCtrl.text.trim());
+    final res = await showDialog<String>(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: AppColors.bgCard,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Text("Weka Kikapu Kando", style: TextStyle(color: AppColors.textWhite, fontSize: 16)),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          style: TextStyle(color: AppColors.textWhite),
+          decoration: InputDecoration(
+            hintText: "Jina la mteja (optional)",
+            hintStyle: TextStyle(color: AppColors.textMuted),
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: Text("Ghairi", style: TextStyle(color: AppColors.textMuted))),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, ctrl.text.trim()),
+            style: ElevatedButton.styleFrom(backgroundColor: AppColors.chartPurple, foregroundColor: Colors.white),
+            child: const Text("Weka Kando"),
+          ),
+        ],
+      ),
+    );
+    return res;
+  }
+
+  Future<void> _openHeldSales() async {
+    final app = context.read<AppProvider>();
+    final bizId = app.selectedBusiness?.businessId;
+    if (bizId == null) return;
+    await context.read<HeldSalesProvider>().load(bizId);
+    if (!mounted) return;
+    final picked = await HeldSalesSheet.show(context);
+    if (picked == null || !mounted) return;
+    await _resumeHeld(picked);
+  }
+
+  Future<void> _resumeHeld(HeldSale h) async {
+    final cart = context.read<CartProvider>();
+    if (cart.items.isNotEmpty) {
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (_) => AlertDialog(
+          backgroundColor: AppColors.bgCard,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: Text("Kikapu cha sasa kina bidhaa", style: TextStyle(color: AppColors.textWhite, fontSize: 16)),
+          content: Text("Kitafutwa kikirudisha hiki kilichowekwa kando. Endelea?",
+              style: TextStyle(color: AppColors.textMuted, fontSize: 13)),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context, false), child: Text("Ghairi", style: TextStyle(color: AppColors.textMuted))),
+            ElevatedButton(onPressed: () => Navigator.pop(context, true), child: const Text("Endelea")),
+          ],
+        ),
+      );
+      if (ok != true) return;
+      if (!mounted) return;
+    }
+    final taken = await context.read<HeldSalesProvider>().take(h.id);
+    if (taken == null || !mounted) return;
+    cart.restoreItems(taken.items);
+    _customerCtrl.text = taken.customerName;
+    _phoneCtrl.text = taken.customerPhone;
+    setState(() {
+      _customerMode = taken.customerMode;
+      _payType = taken.payType;
+    });
+    if (mounted) _snack("Mauzo yamerudishwa", AppColors.accent);
   }
 
   bool get _needsCustomerDetails =>
@@ -2103,9 +2547,35 @@ class _CartSheetState extends State<_CartSheet> {
       }
     }
 
+    if (_payType == 'cash' && _splitPay.enabled && !_splitPay.valid) {
+      _snack(
+        l.isSw
+            ? 'Jumla ya njia za malipo haiendani na jumla ya mauzo'
+            : 'Split payment total does not match the sale total',
+        Colors.orange,
+      );
+      return;
+    }
+
     if (app.api == null || app.selectedBusiness == null) return;
+
+    // ── Punguzo kubwa (>10% ya jumla) linahitaji PIN ya meneja isipokuwa
+    // mtumaji mwenyewe ni meneja/mmiliki tayari (ona helpers/manager_pin.php).
+    String? discountPin;
+    if (_discount > 0 && cart.total > 0 && (_discount / cart.total) * 100 > 10 &&
+        app.user?.isManagerTier != true) {
+      discountPin = await ManagerPinDialog.show(context,
+          reasonLabel: 'Punguzo hili linazidi 10% ya jumla — meneja aweke PIN yake.');
+      if (discountPin == null) return; // cashier cancelled
+    }
+
+    final grandTotal = (cart.total - _discount).clamp(0, cart.total);
+
     setState(() => _processing = true);
     try {
+      final phone = _phoneCtrl.text.trim();
+      final confirmedCustomerId =
+          (_pickedCustomerId != null && _pickedCustomerPhone == phone) ? _pickedCustomerId : null;
       final res = await app.api!.createSale(
         businessId: app.selectedBusiness!.businessId,
         branchId: app.selectedBranch?.branchId ?? 0,
@@ -2113,6 +2583,11 @@ class _CartSheetState extends State<_CartSheet> {
         transactionType: _payType,
         items: cart.toApiItems(),
         amountPaid: _amountPaid(),
+        customerPhone: phone,
+        customerId: confirmedCustomerId,
+        payments: (_payType == 'cash' && _splitPay.enabled) ? _splitPay.payments : null,
+        overallDiscount: _discount > 0 ? _discount : null,
+        managerPin: discountPin,
       );
       if (!mounted) return;
       if (res['success'] == true) {
@@ -2128,8 +2603,16 @@ class _CartSheetState extends State<_CartSheet> {
           customerPhone: _phoneCtrl.text.trim(),
           customerType: _customerMode,
           paymentType: _payType,
-          total: cart.total,
-          amountPaid: _amountPaid() ?? cart.total,
+          total: grandTotal.toDouble(),
+          amountPaid: _amountPaid() ?? grandTotal.toDouble(),
+          changeAmount: (res['change_amount'] as num?)?.toDouble() ??
+              (_splitPay.enabled ? _splitPay.changeAmount : null),
+          discount: (res['discount_amount'] as num?)?.toDouble() ?? _discount,
+          cashierName: app.user?.fullname ?? '',
+          logoUrl: app.selectedBusiness?.logoPath ?? '',
+          businessAddress: app.selectedBusiness?.address ?? '',
+          businessPhone: app.selectedBusiness?.phone ?? '',
+          template: app.selectedBusiness?.receiptTemplate ?? const ReceiptTemplate(),
           items: cart.items
               .map(
                 (i) => _PosReceiptItem(
@@ -2151,13 +2634,16 @@ class _CartSheetState extends State<_CartSheet> {
 
         if (!mounted) return;
         final messenger = ScaffoldMessenger.of(context);
-        final successMsg = L.of(context).saleSuccess;
+        final offline = res['offline'] == true;
+        final successMsg = offline
+            ? (res['message'] as String? ?? L.of(context).saleSuccess)
+            : L.of(context).saleSuccess;
         cart.clear();
         Navigator.pop(context);
         messenger.showSnackBar(
           SnackBar(
             content: Text(successMsg),
-            backgroundColor: AppColors.accent,
+            backgroundColor: offline ? Colors.orange : AppColors.accent,
             behavior: SnackBarBehavior.floating,
           ),
         );
@@ -2188,88 +2674,82 @@ class _CartSheetState extends State<_CartSheet> {
   Widget build(BuildContext context) {
     final l = L.of(context);
     final cart = context.watch<CartProvider>();
-    final bottomInset = MediaQuery.of(context).viewInsets.bottom;
+    final mq = MediaQuery.of(context);
+    final bottomInset = mq.viewInsets.bottom;
+    final maxItemsH = mq.size.height * 0.34;
+
     return Padding(
       padding: EdgeInsets.only(bottom: bottomInset),
       child: Container(
-        constraints: BoxConstraints(
-          maxHeight: MediaQuery.of(context).size.height * 0.92,
-        ),
+        constraints: BoxConstraints(maxHeight: mq.size.height * 0.94),
         decoration: BoxDecoration(
           color: AppColors.bgCard,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(26)),
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            // ── handle + header ───────────────────────────────────────────
             Container(
-              width: 44,
+              width: 40,
               height: 4,
-              margin: const EdgeInsets.all(12),
+              margin: const EdgeInsets.only(top: 10, bottom: 6),
               decoration: BoxDecoration(
-                color: Colors.white24,
+                color: AppColors.border,
                 borderRadius: BorderRadius.circular(2),
               ),
             ),
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              padding: const EdgeInsets.fromLTRB(16, 0, 6, 4),
               child: Row(
                 children: [
-                  Container(
-                    padding: const EdgeInsets.all(9),
-                    decoration: BoxDecoration(
-                      gradient: const LinearGradient(
-                        colors: AppColors.gradPrimary,
-                      ),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: const Icon(
-                      Icons.point_of_sale_rounded,
-                      color: Colors.white,
-                      size: 20,
-                    ),
-                  ),
-                  const SizedBox(width: 10),
                   Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          l.isSw ? 'Kamilisha Mauzo' : 'Complete Sale',
-                          style: TextStyle(
-                            color: AppColors.textWhite,
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        Text(
-                          '${cart.count} ${l.items} • TZS ${widget.fmt.format(cart.total)}',
-                          style: TextStyle(
-                            color: AppColors.textMuted,
-                            fontSize: 12,
-                          ),
-                        ),
-                      ],
+                    child: Text(
+                      l.isSw ? 'Kamilisha Mauzo' : 'Complete Sale',
+                      style: TextStyle(
+                        color: AppColors.textWhite,
+                        fontSize: 17,
+                        fontWeight: FontWeight.w800,
+                      ),
                     ),
                   ),
+                  Text(
+                    '${cart.count} ${l.items}',
+                    style: TextStyle(color: AppColors.textMuted, fontSize: 12),
+                  ),
+                  _HeldSalesButton(onTap: _openHeldSales, compact: true),
+                  const SizedBox(width: 2),
+                  _ShiftButton(compact: true),
+                  if (cart.count > 0)
+                    IconButton(
+                      tooltip: 'Weka kando',
+                      onPressed: _holdCart,
+                      icon: Icon(Icons.pause_circle_outline_rounded, color: AppColors.chartPurple, size: 18),
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                      visualDensity: VisualDensity.compact,
+                    ),
                   IconButton(
                     onPressed: () => Navigator.pop(context),
                     icon: Icon(Icons.close_rounded, color: AppColors.textMuted),
+                    visualDensity: VisualDensity.compact,
                   ),
                 ],
               ),
             ),
-            Flexible(
+            // ── items (bounded, scrolls on its own) ───────────────────────
+            ConstrainedBox(
+              constraints: BoxConstraints(maxHeight: maxItemsH),
               child: ListView.separated(
                 shrinkWrap: true,
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 itemCount: cart.items.length,
-                separatorBuilder: (ctx, i) =>
+                separatorBuilder: (_, _) =>
                     Divider(color: AppColors.border, height: 1),
                 itemBuilder: (ctx, i) {
                   final item = cart.items[i];
                   return Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 10),
+                    padding: const EdgeInsets.symmetric(vertical: 6),
                     child: Row(
                       children: [
                         Expanded(
@@ -2283,13 +2763,14 @@ class _CartSheetState extends State<_CartSheet> {
                                 style: TextStyle(
                                   color: AppColors.textWhite,
                                   fontWeight: FontWeight.w600,
+                                  fontSize: 13.5,
                                 ),
                               ),
                               Text(
-                                'TZS ${widget.fmt.format(item.unitPrice)}${item.unitName.isNotEmpty ? " / ${item.unitName}" : ""}',
+                                '@ ${widget.fmt.format(item.unitPrice)}${item.unitName.isNotEmpty ? " / ${item.unitName}" : ""}',
                                 style: TextStyle(
                                   color: AppColors.textMuted,
-                                  fontSize: 12,
+                                  fontSize: 11,
                                 ),
                               ),
                             ],
@@ -2304,15 +2785,14 @@ class _CartSheetState extends State<_CartSheet> {
                               .read<CartProvider>()
                               .increaseQty(item.cartKey),
                         ),
-                        const SizedBox(width: 8),
                         SizedBox(
-                          width: 90,
+                          width: 74,
                           child: Text(
-                            'TZS ${widget.fmt.format(item.subtotal)}',
+                            widget.fmt.format(item.subtotal),
                             textAlign: TextAlign.right,
-                            style: const TextStyle(
-                              color: AppColors.primary,
-                              fontWeight: FontWeight.bold,
+                            style: TextStyle(
+                              color: AppColors.textWhite,
+                              fontWeight: FontWeight.w700,
                               fontSize: 13,
                             ),
                           ),
@@ -2324,144 +2804,208 @@ class _CartSheetState extends State<_CartSheet> {
               ),
             ),
             Divider(color: AppColors.border, height: 1),
+            // ── payment form (fits; scrolls only when the keyboard is up) ──
             Flexible(
               child: SingleChildScrollView(
-                padding: EdgeInsets.fromLTRB(
-                  16,
-                  12,
-                  16,
-                  16 + MediaQuery.of(context).padding.bottom,
-                ),
+                padding: const EdgeInsets.fromLTRB(16, 10, 16, 6),
                 child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _TotalCard(fmt: widget.fmt, total: cart.total),
-                    const SizedBox(height: 12),
+                    DiscountField(
+                      subtotal: cart.total,
+                      onChanged: (r) => setState(() => _discount = r.amount),
+                    ),
+                    if (_discount > 0)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4, bottom: 4),
+                        child: Text(
+                          'Jumla baada ya punguzo: TZS ${widget.fmt.format((cart.total - _discount).clamp(0, cart.total))}',
+                          style: TextStyle(color: AppColors.primary, fontWeight: FontWeight.w700, fontSize: 12.5),
+                        ),
+                      ),
+                    _sectionLabel(l.payType),
+                    const SizedBox(height: 6),
+                    SizedBox(
+                      height: 36,
+                      child: ListView(
+                        scrollDirection: Axis.horizontal,
+                        children: [
+                          _payChip('cash', _plain(l.cash), Icons.payments_rounded),
+                          _payChip('loan', _plain(l.loan), Icons.credit_score_rounded),
+                          _payChip('slow_payment', l.isSw ? 'Polepole' : 'Installment', Icons.hourglass_bottom_rounded),
+                          _payChip('cash_not_collected', l.isSw ? 'Bado kulipwa' : 'Not collected', Icons.pending_rounded),
+                          _payChip('bank_transfer', l.isSw ? 'Benki' : 'Bank', Icons.account_balance_rounded),
+                        ],
+                      ),
+                    ),
+                    if (_payType == 'cash')
+                      SplitPaymentField(
+                        total: (cart.total - _discount).clamp(0, cart.total),
+                        onChanged: (r) => setState(() => _splitPay = r),
+                      ),
+                    const SizedBox(height: 10),
+                    _sectionLabel(l.isSw ? 'Mteja' : 'Customer'),
+                    const SizedBox(height: 6),
                     _CustomerModeSelector(
                       value: _customerMode,
                       onChanged: (v) => setState(() => _customerMode = v),
                     ),
-                    const SizedBox(height: 10),
-                    _PosInput(
-                      controller: _customerCtrl,
-                      hint: _needsCustomerDetails
-                          ? l.customer
-                          : (l.isSw
-                                ? 'Jina la mteja (optional)'
-                                : 'Customer name (optional)'),
-                      icon: Icons.person_outline_rounded,
-                    ),
-                    if (_needsCustomerDetails) ...[
-                      const SizedBox(height: 10),
-                      _PosInput(
-                        controller: _phoneCtrl,
-                        hint: l.isSw
-                            ? 'Namba ya simu kwa SMS'
-                            : 'Phone number for SMS',
-                        icon: Icons.phone_rounded,
-                        keyboardType: TextInputType.phone,
-                      ),
-                      const SizedBox(height: 10),
-                      _PosInput(
-                        controller: _locationCtrl,
-                        hint: l.isSw
-                            ? 'Mahali / anuani (optional)'
-                            : 'Location / address (optional)',
-                        icon: Icons.location_on_outlined,
-                      ),
-                    ],
-                    const SizedBox(height: 10),
-                    DropdownButtonFormField<String>(
-                      initialValue: _payType,
-                      dropdownColor: AppColors.bgCard,
-                      style: TextStyle(color: AppColors.textWhite),
-                      decoration: InputDecoration(
-                        labelText: l.payType,
-                        prefixIcon: Icon(
-                          Icons.payment_rounded,
-                          color: AppColors.textMuted,
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Expanded(
+                          flex: 3,
+                          child: _PosInput(
+                            controller: _customerCtrl,
+                            hint: _needsCustomerDetails
+                                ? l.customer
+                                : (l.isSw ? 'Jina (optional)' : 'Name (optional)'),
+                            icon: Icons.person_outline_rounded,
+                          ),
                         ),
-                      ),
-                      items: [
-                        DropdownMenuItem(value: 'cash', child: Text(l.cash)),
-                        DropdownMenuItem(value: 'loan', child: Text(l.loan)),
-                        DropdownMenuItem(
-                          value: 'slow_payment',
-                          child: Text(l.slowPay),
+                        const SizedBox(width: 8),
+                        _PickCustomerButton(
+                          nameCtrl: _customerCtrl,
+                          phoneCtrl: _phoneCtrl,
+                          onPicked: (c) => setState(() {
+                            if (_customerMode == 'walkin') _customerMode = 'registered';
+                            _pickedCustomerId = c.customerId != 0 ? c.customerId : null;
+                            _pickedCustomerPhone = c.phone;
+                          }),
                         ),
-                        DropdownMenuItem(
-                          value: 'cash_not_collected',
-                          child: Text(l.cashNotCollected),
-                        ),
-                        DropdownMenuItem(
-                          value: 'bank_transfer',
-                          child: Text(l.bankTransfer),
-                        ),
+                        if (_needsCustomerDetails) ...[
+                          const SizedBox(width: 8),
+                          Expanded(
+                            flex: 2,
+                            child: _PosInput(
+                              controller: _phoneCtrl,
+                              hint: l.isSw ? 'Simu' : 'Phone',
+                              icon: Icons.phone_rounded,
+                              keyboardType: TextInputType.phone,
+                            ),
+                          ),
+                        ],
                       ],
-                      onChanged: (v) => setState(() => _payType = v!),
                     ),
-                    if (_payType != 'cash') ...[
-                      const SizedBox(height: 10),
-                      _PosInput(
-                        controller: _paidCtrl,
-                        hint: l.isSw
-                            ? 'Kiasi alicholipa sasa (optional)'
-                            : 'Amount paid now (optional)',
-                        icon: Icons.payments_outlined,
-                        keyboardType: TextInputType.number,
-                      ),
-                    ],
-                    if (_needsCustomerDetails) ...[
-                      const SizedBox(height: 10),
-                      _PosInput(
-                        controller: _noteCtrl,
-                        hint: l.isSw
-                            ? 'Maelezo ya mteja/mkopo/SMS (optional)'
-                            : 'Customer/credit/SMS notes (optional)',
-                        icon: Icons.note_alt_outlined,
-                        maxLines: 2,
-                      ),
-                    ],
-                    const SizedBox(height: 14),
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton.icon(
-                        onPressed: _processing ? null : _checkout,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: AppColors.accent,
-                          padding: const EdgeInsets.symmetric(vertical: 14),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(14),
-                          ),
-                        ),
-                        icon: _processing
-                            ? SizedBox(
-                                width: 22,
-                                height: 22,
-                                child: CircularProgressIndicator(
-                                  color: AppColors.bgDark,
-                                  strokeWidth: 2,
-                                ),
-                              )
-                            : Icon(
-                                Icons.check_circle_rounded,
-                                color: AppColors.bgDark,
+                    if (_payType != 'cash' || _needsCustomerDetails) ...[
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          if (_payType != 'cash')
+                            Expanded(
+                              child: _PosInput(
+                                controller: _paidCtrl,
+                                hint: l.isSw ? 'Amelipa sasa' : 'Paid now',
+                                icon: Icons.payments_outlined,
+                                keyboardType: TextInputType.number,
                               ),
-                        label: Text(
-                          _processing ? l.saving : l.saveSale,
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                            color: AppColors.bgDark,
-                          ),
-                        ),
+                            ),
+                          if (_payType != 'cash' && _needsCustomerDetails)
+                            const SizedBox(width: 8),
+                          if (_needsCustomerDetails)
+                            Expanded(
+                              child: _PosInput(
+                                controller: _noteCtrl,
+                                hint: l.isSw ? 'Maelezo / mahali' : 'Note / location',
+                                icon: Icons.note_alt_outlined,
+                              ),
+                            ),
+                        ],
                       ),
-                    ),
+                    ],
                   ],
+                ),
+              ),
+            ),
+            // ── pay button (pinned) ───────────────────────────────────────
+            Padding(
+              padding: EdgeInsets.fromLTRB(16, 8, 16, 12 + mq.padding.bottom),
+              child: SizedBox(
+                width: double.infinity,
+                height: 52,
+                child: ElevatedButton(
+                  onPressed: _processing ? null : _checkout,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.accent,
+                    foregroundColor: AppColors.bgDark,
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                  ),
+                  child: _processing
+                      ? SizedBox(
+                          width: 22,
+                          height: 22,
+                          child: CircularProgressIndicator(
+                            color: AppColors.bgDark,
+                            strokeWidth: 2,
+                          ),
+                        )
+                      : Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            const Icon(Icons.check_circle_rounded, size: 20),
+                            const SizedBox(width: 8),
+                            Flexible(
+                              child: Text(
+                                '${l.isSw ? 'Hifadhi Mauzo' : 'Save Sale'}  •  TZS ${widget.fmt.format(cart.total)}',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
                 ),
               ),
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  /// Labels in L carry a leading emoji; the chip already has an icon.
+  static String _plain(String s) =>
+      s.replaceFirst(RegExp(r'^[^\p{L}\p{N}]+', unicode: true), '').trim();
+
+  Widget _sectionLabel(String t) => Text(
+        t.toUpperCase(),
+        style: TextStyle(
+          color: AppColors.textMuted,
+          fontSize: 10.5,
+          fontWeight: FontWeight.w800,
+          letterSpacing: 0.8,
+        ),
+      );
+
+  Widget _payChip(String value, String label, IconData icon) {
+    final sel = _payType == value;
+    return Padding(
+      padding: const EdgeInsets.only(right: 8),
+      child: ChoiceChip(
+        avatar: Icon(icon, size: 15, color: sel ? Colors.white : AppColors.textMuted),
+        label: Text(
+          label,
+          style: TextStyle(
+            color: sel ? Colors.white : AppColors.textMuted,
+            fontSize: 12,
+            fontWeight: sel ? FontWeight.w700 : FontWeight.w500,
+          ),
+        ),
+        selected: sel,
+        showCheckmark: false,
+        selectedColor: AppColors.primary,
+        backgroundColor: AppColors.bgInput,
+        side: BorderSide(color: sel ? AppColors.primary : AppColors.border),
+        visualDensity: VisualDensity.compact,
+        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        onSelected: (_) => setState(() => _payType = value),
       ),
     );
   }
@@ -2471,7 +3015,8 @@ class _CartSheetState extends State<_CartSheet> {
 // POS Barcode Scanner Sheet (mobile only)
 // ─────────────────────────────────────────────────────────────────────────────
 class _PosBarcodeSheet extends StatefulWidget {
-  final ValueChanged<String> onScanned;
+  /// Called for every scan; returns a toast message + success flag.
+  final ({bool ok, String msg}) Function(String barcode) onScanned;
   const _PosBarcodeSheet({required this.onScanned});
   @override
   State<_PosBarcodeSheet> createState() => _PosBarcodeSheetState();
@@ -2479,13 +3024,22 @@ class _PosBarcodeSheet extends StatefulWidget {
 
 class _PosBarcodeSheetState extends State<_PosBarcodeSheet> {
   late MobileScannerController _ctrl;
-  bool _scanned = false;
+  String? _lastCode;
+  DateTime _lastAt = DateTime.fromMillisecondsSinceEpoch(0);
+  String? _toast;
+  bool _toastOk = true;
+  int _added = 0;
 
   @override
   void initState() {
     super.initState();
     _ctrl = MobileScannerController(
-      detectionSpeed: DetectionSpeed.noDuplicates,
+      detectionSpeed: DetectionSpeed.normal,
+      formats: const [
+        BarcodeFormat.ean13, BarcodeFormat.ean8, BarcodeFormat.upcA,
+        BarcodeFormat.upcE, BarcodeFormat.code128, BarcodeFormat.code39,
+        BarcodeFormat.qrCode, BarcodeFormat.codabar,
+      ],
     );
   }
 
@@ -2495,14 +3049,34 @@ class _PosBarcodeSheetState extends State<_PosBarcodeSheet> {
     super.dispose();
   }
 
+  /// Continuous mode: the sheet stays open so the cashier can scan item
+  /// after item. The same code is accepted again only after 1.5 s so one
+  /// steady frame does not add the product ten times.
   void _onDetect(BarcodeCapture capture) {
-    if (_scanned) return;
     final raw = capture.barcodes.firstOrNull?.rawValue;
     if (raw == null || raw.isEmpty) return;
-    _scanned = true;
-    _ctrl.stop();
-    Navigator.pop(context);
-    widget.onScanned(raw);
+    final now = DateTime.now();
+    if (raw == _lastCode &&
+        now.difference(_lastAt) < const Duration(milliseconds: 1500)) {
+      return;
+    }
+    _lastCode = raw;
+    _lastAt = now;
+    final r = widget.onScanned(raw);
+    if (r.ok) {
+      _added++;
+      HapticFeedback.mediumImpact();
+    } else {
+      HapticFeedback.vibrate();
+    }
+    if (!mounted) return;
+    setState(() {
+      _toast = r.msg;
+      _toastOk = r.ok;
+    });
+    Future.delayed(const Duration(milliseconds: 1800), () {
+      if (mounted && _toast == r.msg) setState(() => _toast = null);
+    });
   }
 
   @override
@@ -2536,18 +3110,37 @@ class _PosBarcodeSheetState extends State<_PosBarcodeSheet> {
                 ),
                 const SizedBox(width: 10),
                 Expanded(
-                  child: Text(
-                    l.scanBarcode,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 16,
-                    ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        l.scanBarcode,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16,
+                        ),
+                      ),
+                      Text(
+                        _added == 0
+                            ? (l.isSw ? 'Scan bidhaa moja baada ya nyingine' : 'Scan items one after another')
+                            : (l.isSw ? '$_added zimeongezwa kwenye mkoba' : '$_added added to cart'),
+                        style: const TextStyle(color: Colors.white54, fontSize: 12),
+                      ),
+                    ],
                   ),
                 ),
-                IconButton(
+                TextButton.icon(
                   onPressed: () => Navigator.pop(context),
-                  icon: const Icon(Icons.close_rounded, color: Colors.white54),
+                  style: TextButton.styleFrom(
+                    backgroundColor: AppColors.primary,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                  icon: const Icon(Icons.check_rounded, size: 18),
+                  label: Text(l.isSw ? 'Maliza' : 'Done',
+                      style: const TextStyle(fontWeight: FontWeight.bold)),
                 ),
               ],
             ),
@@ -2559,12 +3152,68 @@ class _PosBarcodeSheetState extends State<_PosBarcodeSheet> {
                   borderRadius: const BorderRadius.vertical(
                     top: Radius.circular(20),
                   ),
-                  child: MobileScanner(controller: _ctrl, onDetect: _onDetect),
+                  child: MobileScanner(
+                    controller: _ctrl,
+                    onDetect: _onDetect,
+                    errorBuilder: (ctx, error) => Center(
+                      child: Padding(
+                        padding: const EdgeInsets.all(24),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.no_photography_rounded, color: Colors.white54, size: 42),
+                            const SizedBox(height: 12),
+                            Text(
+                              l.isSw
+                                  ? 'Kamera haipatikani.\nRuhusu kamera kwenye settings za simu, au andika barcode kwenye kisanduku cha kutafuta.'
+                                  : 'Camera unavailable.\nAllow camera access in phone settings, or type the barcode in the search box.',
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(color: Colors.white70, fontSize: 13),
+                            ),
+                            const SizedBox(height: 6),
+                            Text(error.errorCode.name,
+                                style: const TextStyle(color: Colors.white30, fontSize: 11)),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
                 ),
                 CustomPaint(
                   painter: _PosScanOverlay(),
                   child: const SizedBox.expand(),
                 ),
+                if (_toast != null)
+                  Positioned(
+                    top: 16,
+                    left: 16,
+                    right: 16,
+                    child: AnimatedOpacity(
+                      opacity: 1,
+                      duration: const Duration(milliseconds: 150),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                        decoration: BoxDecoration(
+                          color: (_toastOk ? AppColors.accent : AppColors.chartRed).withAlpha(235),
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(_toastOk ? Icons.add_shopping_cart_rounded : Icons.error_outline_rounded,
+                                color: Colors.white, size: 18),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(_toast!,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                      color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
                 Positioned(
                   bottom: 20,
                   left: 0,
@@ -2667,6 +3316,13 @@ class _PosReceiptData {
   final String paymentType;
   final double total;
   final double amountPaid;
+  final double? changeOverride;
+  final double discount;
+  final String cashierName;
+  final String logoUrl;
+  final String businessAddress;
+  final String businessPhone;
+  final ReceiptTemplate template;
   final List<_PosReceiptItem> items;
 
   const _PosReceiptData({
@@ -2680,11 +3336,19 @@ class _PosReceiptData {
     required this.paymentType,
     required this.total,
     required this.amountPaid,
+    this.changeOverride,
+    this.discount = 0,
+    this.cashierName = '',
+    this.logoUrl = '',
+    this.businessAddress = '',
+    this.businessPhone = '',
+    this.template = const ReceiptTemplate(),
     required this.items,
   });
 
   double get balance => total - amountPaid > 0 ? total - amountPaid : 0;
-  double get change => amountPaid - total > 0 ? amountPaid - total : 0;
+  double get change =>
+      changeOverride ?? (amountPaid - total > 0 ? amountPaid - total : 0);
 
   factory _PosReceiptData.fromCart({
     required Map<String, dynamic> response,
@@ -2696,6 +3360,13 @@ class _PosReceiptData {
     required String paymentType,
     required double total,
     required double amountPaid,
+    double? changeAmount,
+    double discount = 0,
+    String cashierName = '',
+    String logoUrl = '',
+    String businessAddress = '',
+    String businessPhone = '',
+    ReceiptTemplate template = const ReceiptTemplate(),
     required List<_PosReceiptItem> items,
   }) {
     final data = response['data'];
@@ -2722,15 +3393,40 @@ class _PosReceiptData {
       paymentType: paymentType,
       total: total,
       amountPaid: amountPaid,
+      changeOverride: changeAmount != null && changeAmount > 0 ? changeAmount : null,
+      discount: discount,
+      cashierName: cashierName,
+      logoUrl: logoUrl,
+      businessAddress: businessAddress,
+      businessPhone: businessPhone,
+      template: template,
       items: items,
     );
   }
 }
 
-class _PosReceiptSheet extends StatelessWidget {
+class _PosReceiptSheet extends StatefulWidget {
   final _PosReceiptData receipt;
   final NumberFormat fmt;
   const _PosReceiptSheet({required this.receipt, required this.fmt});
+
+  @override
+  State<_PosReceiptSheet> createState() => _PosReceiptSheetState();
+}
+
+class _PosReceiptSheetState extends State<_PosReceiptSheet> {
+  static const _paperLabels = {'58mm': '58mm', '80mm': '80mm', 'a4': 'A4'};
+  String _paperSize = '80mm';
+  bool _printing = false;
+
+  _PosReceiptData get receipt => widget.receipt;
+  NumberFormat get fmt => widget.fmt;
+
+  @override
+  void initState() {
+    super.initState();
+    _paperSize = StorageService.getString('receipt_paper_size') ?? '80mm';
+  }
 
   String _label(String v) {
     switch (v) {
@@ -2839,6 +3535,17 @@ class _PosReceiptSheet extends StatelessWidget {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
+                          if (receipt.logoUrl.isNotEmpty)
+                            Center(
+                              child: Padding(
+                                padding: const EdgeInsets.only(bottom: 6),
+                                child: Image.network(
+                                  receipt.logoUrl,
+                                  height: 44,
+                                  errorBuilder: (_, _, _) => const SizedBox.shrink(),
+                                ),
+                              ),
+                            ),
                           Center(
                             child: Text(
                               receipt.businessName.toUpperCase(),
@@ -2853,6 +3560,8 @@ class _PosReceiptSheet extends StatelessWidget {
                           const SizedBox(height: 12),
                           _r('Receipt No', receipt.receiptNo),
                           _r('Date', dateFmt.format(receipt.date)),
+                          if (receipt.cashierName.isNotEmpty)
+                            _r('Muuzaji', receipt.cashierName),
                           _r('Customer', receipt.customerName),
                           if (receipt.customerPhone.isNotEmpty)
                             _r('Phone', receipt.customerPhone),
@@ -2881,6 +3590,8 @@ class _PosReceiptSheet extends StatelessWidget {
                             ),
                           ),
                           const Divider(height: 24),
+                          if (receipt.discount > 0)
+                            _money('Discount', receipt.discount, color: Colors.orange),
                           _money('Total', receipt.total, bold: true),
                           _money('Paid', receipt.amountPaid),
                           if (receipt.balance > 0)
@@ -2911,7 +3622,29 @@ class _PosReceiptSheet extends StatelessWidget {
                       ),
                     ),
                   ),
-                  const SizedBox(height: 14),
+                  const SizedBox(height: 10),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: _paperLabels.entries.map((e) {
+                      final sel = _paperSize == e.key;
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 4),
+                        child: ChoiceChip(
+                          label: Text(e.value, style: const TextStyle(fontSize: 11)),
+                          selected: sel,
+                          onSelected: (_) {
+                            setState(() => _paperSize = e.key);
+                            StorageService.saveString('receipt_paper_size', e.key);
+                          },
+                          selectedColor: AppColors.accent.withAlpha(60),
+                          backgroundColor: AppColors.bg,
+                          labelStyle: TextStyle(color: sel ? AppColors.accent : AppColors.textMuted),
+                          visualDensity: VisualDensity.compact,
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                  const SizedBox(height: 10),
                   Row(
                     children: [
                       Expanded(
@@ -2927,13 +3660,18 @@ class _PosReceiptSheet extends StatelessWidget {
                       const SizedBox(width: 10),
                       Expanded(
                         child: ElevatedButton.icon(
-                          onPressed: () => _printReceipt(fmt),
-                          icon: Icon(
-                            Icons.print_rounded,
-                            color: AppColors.bgDark,
-                          ),
+                          onPressed: _printing ? null : () => _printReceipt(fmt),
+                          icon: _printing
+                              ? SizedBox(
+                                  width: 16, height: 16,
+                                  child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.bgDark),
+                                )
+                              : Icon(
+                                  Icons.print_rounded,
+                                  color: AppColors.bgDark,
+                                ),
                           label: Text(
-                            'Print Receipt',
+                            _printing ? 'Inaandaa...' : 'Print Receipt',
                             style: TextStyle(
                               color: AppColors.bgDark,
                               fontWeight: FontWeight.bold,
@@ -2989,15 +3727,48 @@ class _PosReceiptSheet extends StatelessWidget {
         ),
       );
 
+  PdfPageFormat _pageFormatFor(String size) => switch (size) {
+        '58mm' => PdfPageFormat(58 * PdfPageFormat.mm, double.infinity,
+            marginAll: 3 * PdfPageFormat.mm),
+        'a4' => PdfPageFormat.a4,
+        _ => PdfPageFormat.roll80,
+      };
+
   Future<void> _printReceipt(NumberFormat fmt) async {
+    setState(() => _printing = true);
+    pw.MemoryImage? logo;
+    if (receipt.template.showLogo && receipt.logoUrl.isNotEmpty) {
+      try {
+        final res = await http
+            .get(Uri.parse(receipt.logoUrl))
+            .timeout(const Duration(seconds: 8));
+        if (res.statusCode == 200 && res.bodyBytes.isNotEmpty) {
+          logo = pw.MemoryImage(res.bodyBytes);
+        }
+      } catch (_) {
+        // Logo ni ziada tu — risiti inaendelea kuchapishwa bila logo.
+      }
+    }
+    if (!mounted) return;
+
     final dateFmt = DateFormat('dd MMM yyyy, HH:mm');
+    final qrData =
+        '${receipt.businessName}\nRisiti: ${receipt.receiptNo}\nTarehe: ${dateFmt.format(receipt.date)}\nJumla: TZS ${fmt.format(receipt.total)}';
     final doc = pw.Document();
     doc.addPage(
       pw.Page(
-        pageFormat: PdfPageFormat.roll80,
+        pageFormat: _pageFormatFor(_paperSize),
         build: (ctx) => pw.Column(
           crossAxisAlignment: pw.CrossAxisAlignment.stretch,
           children: [
+            if (logo != null)
+              pw.Center(
+                child: pw.Container(
+                  height: 50,
+                  margin: const pw.EdgeInsets.only(bottom: 6),
+                  child: pw.Image(logo),
+                ),
+              ),
             pw.Center(
               child: pw.Text(
                 receipt.businessName.toUpperCase(),
@@ -3014,12 +3785,21 @@ class _PosReceiptSheet extends StatelessWidget {
               ),
             ),
             pw.SizedBox(height: 8),
+            if (receipt.template.showAddress && receipt.businessAddress.isNotEmpty)
+              pw.Center(child: pw.Text(receipt.businessAddress, style: const pw.TextStyle(fontSize: 8))),
+            if (receipt.template.showPhone && receipt.businessPhone.isNotEmpty)
+              pw.Center(child: pw.Text(receipt.businessPhone, style: const pw.TextStyle(fontSize: 8))),
+            pw.SizedBox(height: 4),
             _pdfRow('Receipt No', receipt.receiptNo),
             _pdfRow('Date', dateFmt.format(receipt.date)),
-            _pdfRow('Customer', receipt.customerName),
-            if (receipt.customerPhone.isNotEmpty)
-              _pdfRow('Phone', receipt.customerPhone),
-            _pdfRow('Customer Type', _label(receipt.customerType)),
+            if (receipt.template.showCashier && receipt.cashierName.isNotEmpty)
+              _pdfRow('Muuzaji', receipt.cashierName),
+            if (receipt.template.showCustomer) ...[
+              _pdfRow('Customer', receipt.customerName),
+              if (receipt.customerPhone.isNotEmpty)
+                _pdfRow('Phone', receipt.customerPhone),
+              _pdfRow('Customer Type', _label(receipt.customerType)),
+            ],
             _pdfRow('Payment Type', _label(receipt.paymentType)),
             pw.Divider(),
             ...receipt.items.map(
@@ -3046,6 +3826,8 @@ class _PosReceiptSheet extends StatelessWidget {
               ),
             ),
             pw.Divider(),
+            if (receipt.discount > 0)
+              _pdfMoney('Discount', receipt.discount, fmt),
             _pdfMoney('Total', receipt.total, fmt, bold: true),
             _pdfMoney('Paid', receipt.amountPaid, fmt),
             if (receipt.balance > 0)
@@ -3057,7 +3839,18 @@ class _PosReceiptSheet extends StatelessWidget {
               ),
             if (receipt.change > 0)
               _pdfMoney('Change', receipt.change, fmt, bold: true),
-            pw.SizedBox(height: 12),
+            if (receipt.template.showQr) ...[
+              pw.SizedBox(height: 12),
+              pw.Center(
+                child: pw.BarcodeWidget(
+                  barcode: bc.Barcode.qrCode(),
+                  data: qrData,
+                  width: 70,
+                  height: 70,
+                ),
+              ),
+            ],
+            pw.SizedBox(height: 8),
             pw.Center(
               child: pw.Text(
                 receipt.footerMessage,
@@ -3072,7 +3865,11 @@ class _PosReceiptSheet extends StatelessWidget {
         ),
       ),
     );
-    await Printing.layoutPdf(onLayout: (_) => doc.save());
+    try {
+      await Printing.layoutPdf(onLayout: (_) => doc.save());
+    } finally {
+      if (mounted) setState(() => _printing = false);
+    }
   }
 
   pw.Widget _pdfRow(String k, String v) => pw.Padding(
@@ -3121,4 +3918,324 @@ class _PosReceiptSheet extends StatelessWidget {
       ],
     ),
   );
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MOBILE product browser — slivers: compact hero scrolls away, search +
+// categories stay pinned, 3-column compact grid fills the screen.
+// ─────────────────────────────────────────────────────────────────────────────
+class _MobileProductBrowser extends StatelessWidget {
+  final List<String> categories;
+  final List<Product> filtered;
+  final bool loading;
+  final String selectedCat;
+  final TextEditingController searchCtrl;
+  final NumberFormat fmt;
+  final ValueChanged<String> onSearch;
+  final ValueChanged<String> onCatSelect;
+  final VoidCallback onRefresh;
+  final VoidCallback? onScanTap;
+
+  const _MobileProductBrowser({
+    required this.categories,
+    required this.filtered,
+    required this.loading,
+    required this.selectedCat,
+    required this.searchCtrl,
+    required this.fmt,
+    required this.onSearch,
+    required this.onCatSelect,
+    required this.onRefresh,
+    required this.onScanTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final l = L.of(context);
+    final width = MediaQuery.sizeOf(context).width;
+    // 3 columns on phones, 4 on wide phones / small tablets
+    final cols = width >= 520 ? 4 : 3;
+
+    return RefreshIndicator(
+      color: AppColors.primary,
+      onRefresh: () async => onRefresh(),
+      child: CustomScrollView(
+        physics: const BouncingScrollPhysics(
+          parent: AlwaysScrollableScrollPhysics(),
+        ),
+        slivers: [
+          // ── Compact hero (scrolls away) ─────────────────────────────────
+          SliverToBoxAdapter(
+            child: SafeArea(
+              bottom: false,
+              child: TutorialTarget(
+                id: 'pos_hero',
+                child: _MobilePosHero(
+                  products: filtered.length,
+                  onScanTap: onScanTap,
+                  onRefresh: onRefresh,
+                ),
+              ),
+            ),
+          ),
+          // ── Search + categories (pinned) ───────────────────────────────
+          SliverPersistentHeader(
+            pinned: true,
+            delegate: _PinnedHeaderDelegate(
+              height: 100,
+              child: Container(
+                color: AppColors.bg,
+                padding: const EdgeInsets.fromLTRB(12, 6, 12, 0),
+                child: Column(
+                  children: [
+                    SizedBox(
+                      height: 44,
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: TutorialTarget(
+                              id: 'pos_search',
+                              child: TextField(
+                              controller: searchCtrl,
+                              style: TextStyle(color: AppColors.textWhite, fontSize: 14),
+                              decoration: InputDecoration(
+                                hintText: l.searchProduct,
+                                hintStyle: TextStyle(color: AppColors.textMuted, fontSize: 13),
+                                prefixIcon: Icon(Icons.search_rounded, color: AppColors.textMuted, size: 20),
+                                suffixIcon: ValueListenableBuilder<TextEditingValue>(
+                                  valueListenable: searchCtrl,
+                                  builder: (_, v, _) => v.text.isEmpty
+                                      ? const SizedBox.shrink()
+                                      : IconButton(
+                                          icon: Icon(Icons.close_rounded, color: AppColors.textMuted, size: 18),
+                                          onPressed: () {
+                                            searchCtrl.clear();
+                                            onSearch('');
+                                          },
+                                        ),
+                                ),
+                                isDense: true,
+                                filled: true,
+                                fillColor: AppColors.bgCard,
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                  borderSide: BorderSide(color: AppColors.border),
+                                ),
+                                enabledBorder: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                  borderSide: BorderSide(color: AppColors.border),
+                                ),
+                                focusedBorder: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                  borderSide: const BorderSide(color: AppColors.primary, width: 1.5),
+                                ),
+                                contentPadding: const EdgeInsets.symmetric(vertical: 10),
+                              ),
+                              onChanged: onSearch,
+                            ),
+                            ),
+                          ),
+                          if (onScanTap != null) ...[
+                            const SizedBox(width: 8),
+                            TutorialTarget(
+                              id: 'pos_scan',
+                              child: SizedBox(
+                              width: 44,
+                              height: 44,
+                              child: Material(
+                                color: AppColors.primary,
+                                borderRadius: BorderRadius.circular(12),
+                                child: InkWell(
+                                  borderRadius: BorderRadius.circular(12),
+                                  onTap: onScanTap,
+                                  child: const Icon(Icons.qr_code_scanner_rounded,
+                                      color: Colors.white, size: 22),
+                                ),
+                              ),
+                            ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    TutorialTarget(
+                      id: 'pos_categories',
+                      child: SizedBox(
+                      height: 36,
+                      child: ListView.separated(
+                        scrollDirection: Axis.horizontal,
+                        itemCount: categories.length,
+                        separatorBuilder: (_, _) => const SizedBox(width: 6),
+                        itemBuilder: (ctx, i) {
+                          final cat = categories[i];
+                          final sel = cat == selectedCat;
+                          return ChoiceChip(
+                            label: Text(
+                              cat,
+                              style: TextStyle(
+                                color: sel ? Colors.white : AppColors.textMuted,
+                                fontSize: 12,
+                                fontWeight: sel ? FontWeight.w700 : FontWeight.w500,
+                              ),
+                            ),
+                            selected: sel,
+                            showCheckmark: false,
+                            selectedColor: AppColors.primary,
+                            backgroundColor: AppColors.bgCard,
+                            visualDensity: VisualDensity.compact,
+                            materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            padding: const EdgeInsets.symmetric(horizontal: 10),
+                            side: BorderSide(color: sel ? AppColors.primary : AppColors.border),
+                            onSelected: (_) => onCatSelect(cat),
+                          );
+                        },
+                      ),
+                    ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          // ── Grid ────────────────────────────────────────────────────────
+          if (loading)
+            const SliverFillRemaining(
+              hasScrollBody: false,
+              child: Center(child: CircularProgressIndicator(color: AppColors.primary)),
+            )
+          else if (filtered.isEmpty)
+            SliverFillRemaining(
+              hasScrollBody: false,
+              child: Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.inventory_2_outlined, color: AppColors.textMuted, size: 56),
+                    const SizedBox(height: 12),
+                    Text(l.noProducts, style: TextStyle(color: AppColors.textMuted, fontSize: 15)),
+                    const SizedBox(height: 8),
+                    TextButton.icon(
+                      onPressed: onRefresh,
+                      icon: const Icon(Icons.refresh_rounded),
+                      label: Text(l.refresh),
+                    ),
+                  ],
+                ),
+              ),
+            )
+          else
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(12, 10, 12, 110),
+              sliver: SliverGrid(
+                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: cols,
+                  crossAxisSpacing: 8,
+                  mainAxisSpacing: 8,
+                  childAspectRatio: 0.82,
+                ),
+                delegate: SliverChildBuilderDelegate(
+                  (_, i) => _ProStaggeredItem(
+                    index: i,
+                    child: _ProductCard(product: filtered[i], fmt: fmt, compact: true),
+                  ),
+                  childCount: filtered.length,
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Slim gradient strip: title, live cart summary, scan/refresh.
+class _MobilePosHero extends StatelessWidget {
+  final int products;
+  final VoidCallback? onScanTap;
+  final VoidCallback onRefresh;
+  const _MobilePosHero({
+    required this.products,
+    required this.onScanTap,
+    required this.onRefresh,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final l = L.of(context);
+    final cart = context.watch<CartProvider>();
+    final fmt = NumberFormat('#,###', 'en_US');
+    return Container(
+      margin: const EdgeInsets.fromLTRB(12, 10, 12, 4),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: AppColors.gradHeader,
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: Colors.white.withAlpha(22)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: Colors.white.withAlpha(22),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: const Icon(Icons.point_of_sale_rounded, color: Colors.white, size: 22),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  l.isSw ? 'Kuuza Haraka' : 'Quick Sale',
+                  style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  cart.count == 0
+                      ? '$products ${l.kpiProducts}'
+                      : '${cart.count} ${l.items} • TZS ${fmt.format(cart.total)}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: cart.count == 0 ? Colors.white70 : AppColors.accentBright,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          _RoundAction(icon: Icons.refresh_rounded, onTap: onRefresh),
+        ],
+      ),
+    );
+  }
+}
+
+class _PinnedHeaderDelegate extends SliverPersistentHeaderDelegate {
+  final double height;
+  final Widget child;
+  const _PinnedHeaderDelegate({required this.height, required this.child});
+
+  @override
+  double get minExtent => height;
+  @override
+  double get maxExtent => height;
+
+  @override
+  Widget build(BuildContext context, double shrinkOffset, bool overlapsContent) =>
+      SizedBox.expand(child: child);
+
+  @override
+  bool shouldRebuild(covariant _PinnedHeaderDelegate old) =>
+      old.height != height || old.child != child;
 }

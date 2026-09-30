@@ -1,0 +1,26 @@
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Hatua 4: Punguzo la jumla (overall discount) + idhini ya meneja (PIN).
+-- Hakuna schema mpya inayohitajika. Inatumia column tbl_sales.discount_amount
+-- na tbl_user.pin_hash (zilizoongezwa na migration_manager_pin.sql) zilizopo
+-- tayari.
+-- ═══════════════════════════════════════════════════════════════════════════
+
+-- create_sale.php sasa inakubali `overall_discount` (POST field), tofauti na
+-- discount ya kila line-item (`items[].discount`, ambayo app haitumii bado).
+--
+-- Muundo wa fedha:
+--   grandTotal (baada ya items) -= overall_discount
+--   discountAmount (column tbl_sales.discount_amount) += overall_discount
+--
+-- Idhini: punguzo linalozidi 10% ya subtotal linahitaji `manager_pin` sahihi
+-- (helpers/manager_pin.php's manager_pin_verify()) ISIPOKUWA mtumaji ni
+-- Owner/Admin/Manager/SuperAdmin tayari. 10% ni kigezo (constant) kwenye
+-- create_sale.php — hakuna UI ya settings ya kubadilisha kigezo hiki bado.
+--
+-- App: DiscountField widget (collapsed kwa default), inaonekana bila
+-- kujali payment type. Ikizidi 10%, ManagerPinDialog inaonekana kabla ya
+-- kutuma request (cashier asiye meneja). Inafanya kazi offline pia (discount
+-- + pin zinabeba kwenye sync queue, server inathibitisha wakati wa sync).
+--
+-- Reversal: hakuna schema ya kuondoa — ni logic ya PHP tu. Kurudi nyuma:
+-- ondoa usomaji wa `overall_discount` kwenye create_sale.php.

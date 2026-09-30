@@ -1,0 +1,60 @@
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Kila tawi lina stock yake tofauti + Uhamisho wa stock kati ya matawi
+-- (Hatua 5). Jedwali za uhamisho zinajiunda zenyewe; hakuna schema ya
+-- kuendesha kwa mkono.
+-- ═══════════════════════════════════════════════════════════════════════════
+
+-- 1) UGUNDUZI kabla ya marekebisho: `tbl_product` tayari ina column
+--    `branch_id` (kila bidhaa ina tawi MOJA "mwenyewe"), lakini queries mbili
+--    muhimu hazikuwa zikiitumia:
+--      - get_products.php: iliorodhesha bidhaa ZOTE za biashara, bila
+--        kujali tawi gani limeuliza (branch_id ilikuwepo kwenye response
+--        lakini haikutumika kama filter).
+--      - add_product.php: duplicate-check (jina/barcode/code) ilikuwa
+--        ikiangalia BIASHARA NZIMA, si tawi moja — hivyo tawi la pili lisingeweza
+--        kuwa na bidhaa yenye jina/code sawa na tawi la kwanza (ingekataliwa
+--        kama "tayari ipo").
+--    create_sale.php/dashboard.php/purchases.php n.k. TAYARI zilikuwa sahihi
+--    (dashboard.php ina branch filter tangu awali; create_sale.php inadeduct
+--    kwa product_id ambayo tayari ni ya tawi moja pekee — mara
+--    get_products.php ikirekebishwa, cashier wa tawi B hataona wala
+--    kuuza bidhaa za tawi A kabisa).
+
+-- 2) MAREKEBISHO:
+--    - get_products.php: ikiwa `branch_id` imetumwa (app tayari ilikuwa
+--      ikituma app.selectedBranch?.branchId — angalia pos_screen.dart/
+--      products_screen.dart), orodha inachujwa kwa tawi hilo pekee. Bila
+--      branch_id (maombi ya zamani), tabia ya awali (biashara nzima)
+--      inabaki — HAKUNA ATHARI kwa clients za zamani.
+--    - add_product.php: duplicate-check sasa ina `AND branch_id = :branch_id`
+--      — tawi mbili tofauti zinaweza kuwa na bidhaa yenye jina/code sawa
+--      bila mgongano.
+--    - purchases_screen.dart / purchase_orders_screen.dart / stock_transfers
+--      wanatuma branch_id kwenye utafutaji wa bidhaa sasa.
+--
+--    Imethibitishwa live dhidi ya business_id=13 (tawi moja pekee,
+--    "mahenge" branch_id=5, bidhaa 491): get_products.php inarudisha idadi
+--    SAWA (491) kwa au bila branch_id — HAKUNA REGRESSION kwa biashara ya
+--    sasa, kwa kuwa bidhaa zote tayari ni za tawi hilo moja.
+
+-- 3) UHAMISHO WA STOCK (stock_transfers.php, jedwali mpya):
+--    stock_transfers(transfer_id, business_id, from_branch_id, to_branch_id,
+--      transfer_no, notes, client_op_id, created_by, created_at)
+--    stock_transfer_items(item_id, transfer_id, from_product_id,
+--      to_product_id, product_name, quantity, unit_cost)
+--
+--    create: kwa kila bidhaa — inapunguza stock ya tawi la chanzo (FEFO-
+--    weighted cost, sawa kabisa na create_sale.php), kisha inatafuta bidhaa
+--    ya tawi lengwa kwa product_code (au barcode ikiwa code haipo) — ikiwa
+--    haipo huko, inaundwa moja kwa moja kwa kunakili taarifa za bidhaa ya
+--    chanzo (jina, bei, kategoria, kipimo) na stock=0, kisha batch mpya
+--    inaongezwa kwa gharama ile ile iliyohamishwa.
+--
+--    UI: tab "Uhamisho" kwenye Manage — INAONEKANA TU kwa biashara zenye
+--    matawi 2+ (business_id=13 ina tawi moja, hivyo tab hii haionekani kwao
+--    kwa sasa — bila athari yoyote mpaka watakapoongeza tawi la pili).
+--
+-- Reversal: DROP TABLE stock_transfers, stock_transfer_items (hazina uhusiano
+-- na jedwali nyingine — salama kufuta). Kurudisha get_products.php/
+-- add_product.php: ondoa branch_id filter/AND clause zilizoongezwa (angalia
+-- git history ya commit hii).

@@ -13,6 +13,7 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:image_picker/image_picker.dart';
 import '../providers/app_provider.dart';
+import '../providers/theme_provider.dart';
 import '../theme/app_theme.dart';
 import '../l10n/app_l10n.dart';
 
@@ -231,7 +232,8 @@ class _FormTabState extends State<_FormTab> {
   bool _barcFocused = false;
   XFile?                   _imageFile;
   final List<_PageUnitRow> _sellingUnits = [];
-  bool get _canScan => !kIsWeb && (Platform.isAndroid || Platform.isIOS);
+  /// Native gallery/camera image pickers (desktop uses a file dialog).
+  bool get _isMobile => !kIsWeb && (Platform.isAndroid || Platform.isIOS);
 
   void _onBarcFocus() => setState(() => _barcFocused = _barcodeFocus.hasFocus);
 
@@ -341,6 +343,11 @@ class _FormTabState extends State<_FormTab> {
 
   Future<void> _pickExpiryDate() async {
     final now = DateTime.now();
+    // AppColors.bgCard/textWhite hubadilika kutegemea mandhari ya SASA
+    // (mchana/usiku) — kulazimisha ThemeData.dark() bila kujali hilo
+    // kulisababisha maandishi meupe juu ya background nyeupe (mandhari
+    // ya mchana) — kalenda ikaonekana "tupu"/plain.
+    final isDark = context.read<ThemeProvider>().isDark;
     final picked = await showDatePicker(
       context: context,
       initialDate: _expiryCtr.text.isNotEmpty
@@ -349,11 +356,12 @@ class _FormTabState extends State<_FormTab> {
       firstDate: DateTime(now.year - 1),
       lastDate: now.add(const Duration(days: 365 * 10)),
       builder: (ctx, child) => Theme(
-        data: ThemeData.dark().copyWith(
-          colorScheme: ColorScheme.dark(
+        data: (isDark ? ThemeData.dark() : ThemeData.light()).copyWith(
+          colorScheme: (isDark ? const ColorScheme.dark() : const ColorScheme.light()).copyWith(
             primary: AppColors.primaryLt,
             onPrimary: AppColors.bgDark,
             surface: AppColors.bgCard,
+            onSurface: AppColors.textWhite,
           ),
         ),
         child: child!,
@@ -802,7 +810,7 @@ class _FormTabState extends State<_FormTab> {
 
           // Preview
           GestureDetector(
-            onTap: _canScan ? _pickImageFromGallery : _pickImageDesktop,
+            onTap: _isMobile ? _pickImageFromGallery : _pickImageDesktop,
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 200),
               height: 150,
@@ -841,7 +849,7 @@ class _FormTabState extends State<_FormTab> {
           const SizedBox(height: 10),
 
           // Pick buttons
-          if (_canScan)
+          if (_isMobile)
             Row(children: [
               Expanded(child: _imgPickBtn(
                 icon: Icons.camera_alt_rounded,
@@ -1763,8 +1771,41 @@ class _ExcelTabState extends State<_ExcelTab> {
 
       setState(() { _rows = rows; _step = 1; _parsing = false; });
     } catch (e) {
-      if (mounted) { _snack('$e', Colors.redAccent); setState(() => _parsing = false); }
+      if (!mounted) return;
+      setState(() => _parsing = false);
+      final msg = '$e';
+      if (msg.contains('Damaged Excel file') || msg.contains('styles')) {
+        _showUnreadableFileDialog();
+      } else {
+        _snack(msg, Colors.redAccent);
+      }
     }
+  }
+
+  void _showUnreadableFileDialog() {
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: AppColors.bgCard,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        icon: const Icon(Icons.warning_amber_rounded, color: Colors.orangeAccent, size: 32),
+        title: Text('Faili haisomeki', style: TextStyle(color: AppColors.textWhite, fontSize: 16)),
+        content: Text(
+          'Faili hili la Excel lina muundo ambao mfumo wetu hauwezi kusoma vizuri '
+          '(mara nyingi hutokea kwa faili zilizotoka programu fulani za zamani au za '
+          'kigeni).\n\nJaribu mojawapo:\n'
+          '1. Fungua faili kwenye Google Sheets, kisha "File > Download > Microsoft Excel (.xlsx)" upya, kisha jaribu tena.\n'
+          '2. Au hifadhi (Save As) faili kama CSV badala ya Excel, kisha pakia hiyo CSV hapa.',
+          style: TextStyle(color: AppColors.textMuted, fontSize: 13, height: 1.5),
+        ),
+        actions: [
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Nimeelewa'),
+          ),
+        ],
+      ),
+    );
   }
 
   List<_ExRow> _parseXlsx(Uint8List bytes) {

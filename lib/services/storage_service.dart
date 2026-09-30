@@ -38,6 +38,9 @@ class StorageService {
     'branch_id',
     'selected_business_id',
     'selected_branch_id',
+    'auth_token',
+    'offline_login_user',
+    'offline_login_hash',
   ]);
 
   static Future<void> clear() => _prefs.clear();

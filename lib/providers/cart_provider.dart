@@ -105,6 +105,16 @@ class CartProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Replaces the cart with a previously-held sale's items as-is (qty not
+  /// re-validated against current stock — a real stock drop since the sale
+  /// was held surfaces as the normal "insufficient stock" error at checkout).
+  void restoreItems(List<CartItem> items) {
+    _items
+      ..clear()
+      ..addAll(items);
+    notifyListeners();
+  }
+
   // ── Serialize for API ────────────────────────────────────────────────────
   List<Map<String, dynamic>> toApiItems() => _items.map((i) => {
     'product_id':     i.productId,

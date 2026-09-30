@@ -320,12 +320,12 @@ class _RegisterScreenState extends State<RegisterScreen>
                   color: Colors.white, fontSize: 34,
                   fontWeight: FontWeight.bold, height: 1.2)),
           const SizedBox(height: 12),
-          const Text('Jisajili bure na upate:\n✨ Trial ya siku 14 bila malipo',
+          const Text('Jisajili bure na upate:\n✨ Trial ya miezi 3 bila malipo',
               style: TextStyle(color: Colors.white60, fontSize: 13, height: 1.6)),
           const SizedBox(height: 32),
           ...[
             ('✅', 'Akaunti na biashara kwa hatua 2 tu'),
-            ('🆓', 'Trial ya siku 14 bila malipo yoyote'),
+            ('🆓', 'Trial ya miezi 3 bila malipo yoyote'),
             ('🏪', 'Tawi la kwanza (Main Branch) tayari'),
             ('📊', 'Dashboard, POS, inventory — zote!'),
             ('🔒', 'Data yako iko salama kabisa'),
@@ -743,7 +743,7 @@ class _RegisterScreenState extends State<RegisterScreen>
       const SizedBox(width: 12),
       const Expanded(
         child: Text(
-          'Utapata trial ya BURE ya siku 14 baada ya kusajili!\nHuhitaji kadi ya benki.',
+          'Utapata trial ya BURE ya miezi 3 baada ya kusajili!\nHuhitaji kadi ya benki.',
           style: TextStyle(color: AppColors.accent, fontSize: 12,
               fontWeight: FontWeight.w600, height: 1.5),
         ),
@@ -910,7 +910,7 @@ class _InfoBubbleState extends State<_InfoBubble>
             child: Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
-                color: const Color(0xFF1E3A5F),
+                color: AppColors.border,
                 borderRadius: BorderRadius.circular(16),
                 border: Border.all(color: AppColors.primary.withAlpha(100)),
                 boxShadow: [
