@@ -352,8 +352,8 @@ class _ProductsScreenState extends State<ProductsScreen>
           p.category.toLowerCase().contains(_search.toLowerCase()) ||
           p.barcode.contains(_search);
       final matchFilter = switch (_filter) {
-        'in_stock' => p.stock > 5,
-        'low' => p.stock > 0 && p.stock <= 5,
+        'in_stock' => p.stock > p.minStock,
+        'low' => p.stock > 0 && p.stock <= p.minStock,
         'out' => p.stock <= 0,
         _ => true,
       };
@@ -385,14 +385,14 @@ class _ProductsScreenState extends State<ProductsScreen>
 
   Color _stockColor(Product p) {
     if (p.stock <= 0) return AppColors.chartRed;
-    if (p.stock <= p.minStock || p.stock <= 5) return AppColors.chartOrange;
+    if (p.stock <= p.minStock) return AppColors.chartOrange;
     return AppColors.accent;
   }
 
   String _stockLabel(Product p) {
     final l = L.of(context);
     if (p.stock <= 0) return l.isSw ? 'Imeisha' : 'Out of Stock';
-    if (p.stock <= p.minStock || p.stock <= 5) {
+    if (p.stock <= p.minStock) {
       return l.isSw ? 'Stock Ndogo' : 'Low Stock';
     }
     return l.isSw ? 'Ipo Stock' : 'In Stock';
@@ -433,7 +433,7 @@ class _ProductsScreenState extends State<ProductsScreen>
     final totalQty = _all.fold<int>(0, (a, p) => a + p.stock);
     final value = _all.fold<double>(0, (a, p) => a + p.sellPrice * p.stock);
     final cost = _all.fold<double>(0, (a, p) => a + p.buyPrice * p.stock);
-    final low = _all.where((p) => p.stock > 0 && (p.stock <= p.minStock || p.stock <= 5)).length;
+    final low = _all.where((p) => p.stock > 0 && p.stock <= p.minStock).length;
     final out = _all.where((p) => p.stock <= 0).length;
     Widget stat(String v, String k, Color c, {VoidCallback? onTap}) => InkWell(
           onTap: onTap,
@@ -549,7 +549,7 @@ class _ProductsScreenState extends State<ProductsScreen>
     final l = L.of(context);
     final mq = MediaQuery.of(context);
     final out = _all.where((p) => p.stock <= 0).length;
-    final low = _all.where((p) => p.stock > 0 && (p.stock <= p.minStock || p.stock <= 5)).length;
+    final low = _all.where((p) => p.stock > 0 && p.stock <= p.minStock).length;
     final cats = <String>{for (final p in _all) if (p.category.isNotEmpty) p.category}.toList()..sort();
     final fabBottom = mq.viewPadding.bottom + 72 + 10 + 24;
     final filtersActive = _filter != 'all' || _sort != 'name';

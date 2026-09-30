@@ -10,6 +10,7 @@ import '../models/supplier.dart';
 import '../providers/app_provider.dart';
 import '../services/crm_api.dart';
 import '../theme/app_theme.dart';
+import '../widgets/premium_empty_state.dart';
 import 'suppliers_screen.dart';
 
 /// Manunuzi (purchases): record stock bought from a supplier, track how much
@@ -135,7 +136,13 @@ class _PurchasesScreenState extends State<PurchasesScreen> {
             child: _loading
                 ? const Center(child: CircularProgressIndicator(color: AppColors.primary))
                 : _all.isEmpty
-                    ? Center(child: Text('Hakuna manunuzi bado', style: TextStyle(color: AppColors.textMuted)))
+                    ? PremiumEmptyState(
+                        icon: Icons.move_to_inbox_outlined,
+                        title: 'Hakuna manunuzi bado',
+                        subtitle: 'Rekodi ununuzi wa stock kutoka kwa wasambazaji na fuatilia madeni yako.',
+                        buttonLabel: 'Ongeza Ununuzi',
+                        onButtonTap: () => _openForm(),
+                      )
                     : ListView.separated(
                         padding: const EdgeInsets.fromLTRB(16, 4, 16, 90),
                         itemCount: _all.length,

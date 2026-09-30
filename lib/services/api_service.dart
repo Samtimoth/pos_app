@@ -1,7 +1,21 @@
 import 'dart:convert';
+import 'package:cross_file/cross_file.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:http/http.dart' as http;
 import 'device_id_service.dart';
 import 'storage_service.dart';
+
+/// `MultipartFile.fromPath` inahitaji faili halisi la mfumo (dart:io) —
+/// halifanyi kazi kwenye web (huko ImagePicker/FilePicker inarudisha "blob:"
+/// URL, si njia halisi ya faili). Web inasoma bytes moja kwa moja kupitia
+/// XFile (inayofanya kazi kwa jina moja kwa moja kwa majukwaa yote mawili).
+Future<http.MultipartFile> _fileMultipart(String field, String path, {String filename = 'file'}) async {
+  if (kIsWeb) {
+    final bytes = await XFile(path).readAsBytes();
+    return http.MultipartFile.fromBytes(field, bytes, filename: filename);
+  }
+  return http.MultipartFile.fromPath(field, path);
+}
 
 /// Imetumwa na server (401): token haipo/imeisha — mtumiaji aingie tena.
 class AuthException implements Exception {
@@ -259,7 +273,7 @@ class ApiService {
       req.fields['expiry_date'] = expiryDate;
     }
     if (imagePath != null && imagePath.isNotEmpty) {
-      req.files.add(await http.MultipartFile.fromPath('image', imagePath));
+      req.files.add(await _fileMultipart('image', imagePath, filename: 'image.jpg'));
     }
     final streamed = await _client.send(req).timeout(const Duration(seconds: 60));
     final res      = await http.Response.fromStream(streamed);
@@ -312,7 +326,7 @@ class ApiService {
       req.fields['expiry_date'] = expiryDate;
     }
     if (imagePath != null && imagePath.isNotEmpty) {
-      req.files.add(await http.MultipartFile.fromPath('image', imagePath));
+      req.files.add(await _fileMultipart('image', imagePath, filename: 'image.jpg'));
     }
     final streamed = await _client.send(req).timeout(const Duration(seconds: 60));
     final res      = await http.Response.fromStream(streamed);
@@ -751,7 +765,7 @@ class ApiService {
       'notes':       notes,
     });
     if (proofPath != null && proofPath.isNotEmpty) {
-      req.files.add(await http.MultipartFile.fromPath('proof', proofPath));
+      req.files.add(await _fileMultipart('proof', proofPath, filename: 'proof.jpg'));
     }
     final streamed = await _client.send(req).timeout(const Duration(seconds: 60));
     final res      = await http.Response.fromStream(streamed);

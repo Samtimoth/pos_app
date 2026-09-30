@@ -7,6 +7,7 @@ import '../models/supplier.dart';
 import '../providers/app_provider.dart';
 import '../services/crm_api.dart';
 import '../theme/app_theme.dart';
+import '../widgets/premium_empty_state.dart';
 import 'suppliers_screen.dart';
 
 /// PO rasmi (Hatua 5): hatua ya KUAGIZA, tofauti na Purchases (kupokea +
@@ -128,7 +129,13 @@ class _PurchaseOrdersScreenState extends State<PurchaseOrdersScreen> {
             child: _loading
                 ? const Center(child: CircularProgressIndicator(color: AppColors.primary))
                 : _all.isEmpty
-                    ? Center(child: Text('Hakuna maagizo (PO) bado', style: TextStyle(color: AppColors.textMuted)))
+                    ? PremiumEmptyState(
+                        icon: Icons.request_quote_outlined,
+                        title: 'Hakuna maagizo (PO) bado',
+                        subtitle: 'Tengeneza agizo la ununuzi (Purchase Order) kwa msambazaji kabla ya bidhaa kuwasili.',
+                        buttonLabel: 'Agiza Bidhaa (PO)',
+                        onButtonTap: () => _openForm(),
+                      )
                     : ListView.separated(
                         padding: const EdgeInsets.fromLTRB(16, 4, 16, 90),
                         itemCount: _all.length,

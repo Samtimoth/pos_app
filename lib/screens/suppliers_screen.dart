@@ -9,6 +9,7 @@ import '../models/supplier.dart';
 import '../providers/app_provider.dart';
 import '../services/crm_api.dart';
 import '../theme/app_theme.dart';
+import '../widgets/premium_empty_state.dart';
 
 /// Wasambazaji (suppliers): list, search, add/edit, delete.
 /// [pickMode] returns the chosen supplier via Navigator.pop (used by
@@ -182,8 +183,12 @@ class _SuppliersScreenState extends State<SuppliersScreen> {
             child: _loading
                 ? const Center(child: CircularProgressIndicator(color: AppColors.primary))
                 : _filtered.isEmpty
-                    ? Center(
-                        child: Text('Hakuna wasambazaji bado', style: TextStyle(color: AppColors.textMuted)),
+                    ? PremiumEmptyState(
+                        icon: Icons.local_shipping_outlined,
+                        title: 'Hakuna wasambazaji bado',
+                        subtitle: 'Ongeza wasambazaji wanaokuletea bidhaa ili ufuatilie manunuzi na madeni yao.',
+                        buttonLabel: 'Ongeza Msambazaji',
+                        onButtonTap: () => _openForm(),
                       )
                     : ListView.separated(
                         padding: const EdgeInsets.fromLTRB(16, 4, 16, 90),

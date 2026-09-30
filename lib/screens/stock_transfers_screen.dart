@@ -7,6 +7,7 @@ import '../models/product.dart';
 import '../providers/app_provider.dart';
 import '../services/crm_api.dart';
 import '../theme/app_theme.dart';
+import '../widgets/premium_empty_state.dart';
 
 /// Uhamisho wa stock kati ya matawi (Hatua 5): kila tawi lina bidhaa/stock
 /// yake tofauti sasa — hii inahamisha kiasi kutoka tawi moja kwenda lingine,
@@ -89,7 +90,13 @@ class _StockTransfersScreenState extends State<StockTransfersScreen> {
       body: _loading
           ? const Center(child: CircularProgressIndicator(color: AppColors.primary))
           : _all.isEmpty
-              ? Center(child: Text('Hakuna uhamisho wa stock bado', style: TextStyle(color: AppColors.textMuted)))
+              ? PremiumEmptyState(
+                  icon: Icons.sync_alt_rounded,
+                  title: 'Hakuna uhamisho wa stock bado',
+                  subtitle: 'Hamisha bidhaa kutoka tawi moja kwenda lingine unapohitaji kusawazisha stock.',
+                  buttonLabel: 'Hamisha Stock',
+                  onButtonTap: () => _openForm(),
+                )
               : ListView.separated(
                   padding: const EdgeInsets.fromLTRB(16, 10, 16, 90),
                   itemCount: _all.length,

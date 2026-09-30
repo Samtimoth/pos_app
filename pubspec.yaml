@@ -41,6 +41,7 @@ dependencies:
   excel: ^4.0.3
   mobile_scanner: ^7.4.1
   image_picker: ^1.1.2
+  cross_file: ^0.3.5+2
   barcode_widget: ^2.0.4
   barcode: ^2.2.9
   printing: ^5.12.0

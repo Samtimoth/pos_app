@@ -10,6 +10,7 @@ import '../models/product.dart';
 import '../providers/app_provider.dart';
 import '../services/crm_api.dart';
 import '../theme/app_theme.dart';
+import '../widgets/premium_empty_state.dart';
 import 'customers_screen.dart';
 
 /// Nukuu ya Bei (Quotation, Hatua 6): hati ya bei kwa mteja KABLA ya mauzo
@@ -128,7 +129,13 @@ class _QuotationsScreenState extends State<QuotationsScreen> {
             child: _loading
                 ? const Center(child: CircularProgressIndicator(color: AppColors.primary))
                 : _all.isEmpty
-                    ? Center(child: Text('Hakuna nukuu bado', style: TextStyle(color: AppColors.textMuted)))
+                    ? PremiumEmptyState(
+                        icon: Icons.description_outlined,
+                        title: 'Hakuna nukuu bado',
+                        subtitle: 'Tengeneza nukuu ya bei kwa mteja kabla ya kufanya mauzo rasmi.',
+                        buttonLabel: 'Tengeneza Nukuu',
+                        onButtonTap: () => _openForm(),
+                      )
                     : ListView.separated(
                         padding: const EdgeInsets.fromLTRB(16, 4, 16, 90),
                         itemCount: _all.length,
