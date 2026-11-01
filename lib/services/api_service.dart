@@ -57,8 +57,19 @@ class ApiService {
       };
 
   /// Decode response; 401 inatupa [AuthException] (session imeisha).
+  /// Tunatumia ujumbe halisi wa server (unaoeleza SABABU: token haipo,
+  /// imeisha muda, au si sahihi) badala ya ujumbe wa jumla kila wakati —
+  /// huu ulikuwa ukiwa mmoja kila mara, ukifanya iwe vigumu kujua chanzo
+  /// halisi cha 401 wakati wa kuchunguza matatizo ya mtumiaji.
   dynamic _decode(http.Response res) {
-    if (res.statusCode == 401) throw AuthException();
+    if (res.statusCode == 401) {
+      String? serverMsg;
+      try {
+        final body = jsonDecode(res.body);
+        if (body is Map && body['message'] is String) serverMsg = body['message'] as String;
+      } catch (_) {}
+      throw serverMsg != null ? AuthException(serverMsg) : AuthException();
+    }
     return jsonDecode(res.body);
   }
 
@@ -146,7 +157,7 @@ class ApiService {
     if (dateFrom != null) params['date_from'] = dateFrom;
     if (dateTo != null) params['date_to'] = dateTo;
     final uri = Uri.parse('$baseUrl/dashboard.php').replace(queryParameters: params);
-    final res = await _client.get(uri).timeout(const Duration(seconds: 15));
+    final res = await _client.get(uri, headers: _headers).timeout(const Duration(seconds: 15));
     return _decode(res) as Map<String, dynamic>;
   }
 
@@ -157,7 +168,7 @@ class ApiService {
     if (search.isNotEmpty) params['search'] = search;
     if (category != null && category.isNotEmpty) params['category'] = category;
     final uri = Uri.parse('$baseUrl/get_products.php').replace(queryParameters: params);
-    final res = await _client.get(uri).timeout(const Duration(seconds: 15));
+    final res = await _client.get(uri, headers: _headers).timeout(const Duration(seconds: 15));
     final body = _decode(res) as Map<String, dynamic>;
     if (body['success'] == true) return body['products'] as List;
     throw Exception(body['message'] ?? 'Imeshindwa kupata bidhaa');
@@ -167,7 +178,7 @@ class ApiService {
   Future<List<dynamic>> getCategories(int businessId) async {
     final uri = Uri.parse('$baseUrl/get_categories.php')
         .replace(queryParameters: {'business_id': businessId.toString()});
-    final res = await _client.get(uri).timeout(const Duration(seconds: 15));
+    final res = await _client.get(uri, headers: _headers).timeout(const Duration(seconds: 15));
     final body = _decode(res) as Map<String, dynamic>;
     if (body['success'] == true) return body['categories'] as List;
     return [];
@@ -182,7 +193,7 @@ class ApiService {
     if (dateTo != null) params['date_to'] = dateTo;
     if (status != null) params['status'] = status;
     final uri = Uri.parse('$baseUrl/get_sales.php').replace(queryParameters: params);
-    final res = await _client.get(uri).timeout(const Duration(seconds: 15));
+    final res = await _client.get(uri, headers: _headers).timeout(const Duration(seconds: 15));
     final body = _decode(res) as Map<String, dynamic>;
     if (body['success'] == true) return body['sales'] as List;
     return [];
@@ -373,7 +384,7 @@ class ApiService {
           'business_id': businessId.toString(),
         },
       );
-      final res  = await _client.get(uri).timeout(const Duration(seconds: 15));
+      final res  = await _client.get(uri, headers: _headers).timeout(const Duration(seconds: 15));
       final body = _decode(res) as Map<String, dynamic>;
       if (body['success'] == true) return body['batches'] as List? ?? [];
     } catch (_) {}
@@ -449,7 +460,7 @@ class ApiService {
   Future<List<String>> getUnits(int businessId) async {
     final uri = Uri.parse('$baseUrl/get_units.php')
         .replace(queryParameters: {'business_id': businessId.toString()});
-    final res  = await _client.get(uri).timeout(const Duration(seconds: 10));
+    final res  = await _client.get(uri, headers: _headers).timeout(const Duration(seconds: 10));
     final body = _decode(res) as Map<String, dynamic>;
     if (body['success'] == true) {
       return (body['units'] as List)
@@ -483,7 +494,7 @@ class ApiService {
   Future<Map<String, dynamic>> getSaleDetail(int saleId) async {
     final uri = Uri.parse('$baseUrl/get_sale_detail.php')
         .replace(queryParameters: {'sale_id': saleId.toString()});
-    final res = await _client.get(uri).timeout(const Duration(seconds: 15));
+    final res = await _client.get(uri, headers: _headers).timeout(const Duration(seconds: 15));
     return _decode(res) as Map<String, dynamic>;
   }
 
@@ -608,7 +619,7 @@ class ApiService {
     try {
       final uri = Uri.parse('$baseUrl/sale_returns.php')
           .replace(queryParameters: {'action': 'list', 'sale_id': saleId.toString()});
-      final res = await _client.get(uri).timeout(const Duration(seconds: 15));
+      final res = await _client.get(uri, headers: _headers).timeout(const Duration(seconds: 15));
       final body = _decode(res) as Map<String, dynamic>;
       if (body['success'] == true) return body['returns'] as List? ?? [];
     } catch (_) {}
@@ -635,7 +646,7 @@ class ApiService {
   Future<List<dynamic>> listCategories(int businessId) async {
     final uri = Uri.parse('$baseUrl/manage_categories.php').replace(
         queryParameters: {'action': 'list', 'business_id': businessId.toString()});
-    final res  = await _client.get(uri).timeout(const Duration(seconds: 15));
+    final res  = await _client.get(uri, headers: _headers).timeout(const Duration(seconds: 15));
     final body = _decode(res) as Map<String, dynamic>;
     if (body['success'] == true) return body['categories'] as List;
     return [];
@@ -662,7 +673,7 @@ class ApiService {
   Future<List<dynamic>> listUnits(int businessId) async {
     final uri = Uri.parse('$baseUrl/manage_units.php').replace(
         queryParameters: {'action': 'list', 'business_id': businessId.toString()});
-    final res  = await _client.get(uri).timeout(const Duration(seconds: 15));
+    final res  = await _client.get(uri, headers: _headers).timeout(const Duration(seconds: 15));
     final body = _decode(res) as Map<String, dynamic>;
     if (body['success'] == true) return body['units'] as List;
     return [];
@@ -675,7 +686,7 @@ class ApiService {
     try {
       final uri = Uri.parse('$baseUrl/get_sale_payments.php')
           .replace(queryParameters: {'sale_id': saleId.toString()});
-      final res  = await _client.get(uri).timeout(const Duration(seconds: 10));
+      final res  = await _client.get(uri, headers: _headers).timeout(const Duration(seconds: 10));
       final body = _decode(res) as Map<String, dynamic>;
       if (body['success'] == true) return body['payments'] as List? ?? [];
     } catch (_) {}
@@ -689,7 +700,7 @@ class ApiService {
     try {
       final uri = Uri.parse('$baseUrl/get_sale_payments.php')
           .replace(queryParameters: {'sale_id': saleId.toString()});
-      final res  = await _client.get(uri).timeout(const Duration(seconds: 10));
+      final res  = await _client.get(uri, headers: _headers).timeout(const Duration(seconds: 10));
       final body = _decode(res) as Map<String, dynamic>;
       if (body['success'] == true) return body['breakdown'] as List? ?? [];
     } catch (_) {}
@@ -730,7 +741,7 @@ class ApiService {
   Future<Map<String, dynamic>> getMySubscription(int userId) async {
     final uri = Uri.parse('$baseUrl/get_my_subscription.php')
         .replace(queryParameters: {'user_id': userId.toString()});
-    final res = await _client.get(uri).timeout(const Duration(seconds: 15));
+    final res = await _client.get(uri, headers: _headers).timeout(const Duration(seconds: 15));
     return _decode(res) as Map<String, dynamic>;
   }
 
@@ -775,7 +786,7 @@ class ApiService {
   Future<Map<String, dynamic>> getMyPayments(int userId) async {
     final uri = Uri.parse('$baseUrl/get_my_payments.php')
         .replace(queryParameters: {'user_id': userId.toString()});
-    final res = await _client.get(uri).timeout(const Duration(seconds: 15));
+    final res = await _client.get(uri, headers: _headers).timeout(const Duration(seconds: 15));
     return _decode(res) as Map<String, dynamic>;
   }
 
@@ -790,7 +801,7 @@ class ApiService {
         if (status.isNotEmpty) 'status': status,
       },
     );
-    final res = await _client.get(uri).timeout(const Duration(seconds: 15));
+    final res = await _client.get(uri, headers: _headers).timeout(const Duration(seconds: 15));
     return _decode(res) as Map<String, dynamic>;
   }
 
@@ -817,7 +828,7 @@ class ApiService {
   Future<Map<String, dynamic>> getSuperAdminStats(int requesterUserId) async {
     final uri = Uri.parse('$baseUrl/superadmin_stats.php')
         .replace(queryParameters: {'requester_user_id': requesterUserId.toString()});
-    final res = await _client.get(uri).timeout(const Duration(seconds: 15));
+    final res = await _client.get(uri, headers: _headers).timeout(const Duration(seconds: 15));
     return _decode(res) as Map<String, dynamic>;
   }
 
@@ -832,7 +843,7 @@ class ApiService {
         if (q.isNotEmpty) 'q': q,
       },
     );
-    final res = await _client.get(uri).timeout(const Duration(seconds: 15));
+    final res = await _client.get(uri, headers: _headers).timeout(const Duration(seconds: 15));
     return _decode(res) as Map<String, dynamic>;
   }
 
@@ -949,7 +960,7 @@ class ApiService {
   Future<Map<String, dynamic>> getProfile(int userId) async {
     final uri = Uri.parse('$baseUrl/get_profile.php')
         .replace(queryParameters: {'user_id': userId.toString()});
-    final res = await _client.get(uri).timeout(const Duration(seconds: 15));
+    final res = await _client.get(uri, headers: _headers).timeout(const Duration(seconds: 15));
     return _decode(res) as Map<String, dynamic>;
   }
 
@@ -986,7 +997,7 @@ class ApiService {
       if (branchId != null) 'branch_id': branchId.toString(),
     };
     final uri = Uri.parse('$baseUrl/reports.php').replace(queryParameters: params);
-    final res = await http.get(uri).timeout(const Duration(seconds: 30));
+    final res = await http.get(uri, headers: _headers).timeout(const Duration(seconds: 30));
     return _decode(res) as Map<String, dynamic>;
   }
 
@@ -1001,7 +1012,7 @@ class ApiService {
       if (branchId != null) 'branch_id': branchId.toString(),
     };
     final uri = Uri.parse('$baseUrl/cashflow.php').replace(queryParameters: params);
-    final res = await http.get(uri).timeout(const Duration(seconds: 30));
+    final res = await http.get(uri, headers: _headers).timeout(const Duration(seconds: 30));
     return _decode(res) as Map<String, dynamic>;
   }
 
@@ -1011,7 +1022,7 @@ class ApiService {
       'as_of': ?asOf,
     };
     final uri = Uri.parse('$baseUrl/account_summary.php').replace(queryParameters: params);
-    final res = await http.get(uri).timeout(const Duration(seconds: 30));
+    final res = await http.get(uri, headers: _headers).timeout(const Duration(seconds: 30));
     return _decode(res) as Map<String, dynamic>;
   }
 
@@ -1024,7 +1035,7 @@ class ApiService {
       if (branchId != null) 'branch_id': branchId.toString(),
     };
     final uri = Uri.parse('$baseUrl/slow_stock.php').replace(queryParameters: params);
-    final res = await http.get(uri).timeout(const Duration(seconds: 30));
+    final res = await http.get(uri, headers: _headers).timeout(const Duration(seconds: 30));
     return _decode(res) as Map<String, dynamic>;
   }
 
@@ -1039,7 +1050,7 @@ class ApiService {
       'date_to': ?dateTo,
     };
     final uri = Uri.parse('$baseUrl/expenses.php').replace(queryParameters: params);
-    final res = await http.get(uri).timeout(const Duration(seconds: 15));
+    final res = await http.get(uri, headers: _headers).timeout(const Duration(seconds: 15));
     final body = _decode(res) as Map<String, dynamic>;
     if (body['success'] == true) return body['expenses'] as List;
     throw Exception(body['message'] ?? 'Imeshindwa kupata matumizi');
@@ -1103,7 +1114,7 @@ class ApiService {
     if (branchId != null) params['branch_id'] = branchId.toString();
     if (period != null) params['period'] = period;
     final uri = Uri.parse('$baseUrl/chart_data.php').replace(queryParameters: params);
-    final res = await _client.get(uri).timeout(const Duration(seconds: 15));
+    final res = await _client.get(uri, headers: _headers).timeout(const Duration(seconds: 15));
     return _decode(res) as Map<String, dynamic>;
   }
 }
